@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5efe3;
+  --foreground: #241f17;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-fraunces);
+
+  --color-paper: #f5efe3;
+  --color-paper-card: #fbf7ee;
+  --color-ink: #241f17;
+  --color-ink-dim: #6f6656;
+  --color-line: #e2d5bb;
+  --color-gold: #a9782a;
+  --color-gold-bright: #c9973f;
+  --color-gold-dim: #8a6423;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+.text-gradient-gold {
+  background-image: linear-gradient(100deg, var(--color-gold-dim), var(--color-gold) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.seam-glow {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-gold) 30%, transparent), 0 0 40px -12px color-mix(in srgb, var(--color-gold) 45%, transparent);
+}
