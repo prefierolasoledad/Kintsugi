@@ -50,6 +50,29 @@ Get-CimInstance Win32_Process |
 
 Kill the top of the tree (the `npm` process), not just the leaf.
 
+## Signed commits
+
+Commits here are signed with SSH, so authorship is verifiable rather than
+self-declared — Git's `author` field is plain text that anyone can set.
+
+```bash
+ssh-keygen -t ed25519 -C "you@example.com (signing)" -f ~/.ssh/id_ed25519_signing
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519_signing.pub
+git config --global commit.gpgsign true
+```
+
+Then add the **public** key to GitHub under *Settings → SSH and GPG keys* as a
+**Signing Key** (a separate entry from an authentication key), and enable
+**Vigilant mode** on that page so unsigned commits are flagged.
+
+For GitHub to show `Verified`, the commit's email must be a verified address on
+the signing account. Check a commit locally with:
+
+```bash
+git log --show-signature -1
+```
+
 ## Conventions
 
 **Validate at the boundary.** Zod parses request bodies and query strings in the

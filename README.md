@@ -126,7 +126,10 @@ replacing it properly would involve.
 
 ## License
 
-No license has been chosen yet, which means default copyright applies and
-others have no right to use, copy, or modify this code. If you intend it to be
-open source, add a `LICENSE` file — [choosealicense.com](https://choosealicense.com)
-is a good starting point.
+[MIT](LICENSE) © Karan Bhatt
+
+You're free to use, modify, and distribute this — including commercially — as
+long as the copyright notice stays with it.
+
+Commits in this repository are signed, so `Verified` on GitHub means the commit
+genuinely came from the holder of the signing key.
