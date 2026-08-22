@@ -6,28 +6,41 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Logo from "@/components/Logo";
 import { IMAGES } from "@/lib/images";
+import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, resendVerification } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resent, setResent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setNeedsVerification(false);
+    setResent(false);
     setSubmitting(true);
     try {
       await login({ email, password });
       router.push("/");
     } catch (err) {
+      if (err instanceof ApiError && err.code === "EMAIL_NOT_VERIFIED") {
+        setNeedsVerification(true);
+      }
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function handleResend() {
+    await resendVerification(email);
+    setResent(true);
   }
 
   return (
@@ -90,7 +103,21 @@ export default function LoginPage() {
               />
             </div>
 
-            {error && <p className="text-sm text-red-700">{error}</p>}
+            {error && (
+              <div>
+                <p className="text-sm text-red-700">{error}</p>
+                {needsVerification && (
+                  <button
+                    type="button"
+                    onClick={handleResend}
+                    disabled={resent}
+                    className="mt-2 text-sm font-medium text-gold-dim hover:text-gold disabled:opacity-60"
+                  >
+                    {resent ? "Verification email sent." : "Resend verification email"}
+                  </button>
+                )}
+              </div>
+            )}
 
             <button
               type="submit"

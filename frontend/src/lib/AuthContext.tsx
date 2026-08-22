@@ -7,9 +7,11 @@ import type { User } from "@/lib/api";
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
-  signup: (input: { name: string; email: string; password: string }) => Promise<void>;
+  signup: (input: { name: string; email: string; password: string }) => Promise<{ email: string }>;
   login: (input: { email: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
+  verifyEmail: (token: string) => Promise<void>;
+  resendVerification: (email: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -27,8 +29,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signup = useCallback(async (input: { name: string; email: string; password: string }) => {
-    const { user } = await api.signup(input);
-    setUser(user);
+    // Signup no longer logs the user in — the account is unverified until
+    // they click the link sent to their email.
+    const { email } = await api.signup(input);
+    return { email };
   }, []);
 
   const login = useCallback(async (input: { email: string; password: string }) => {
@@ -41,8 +45,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
+  const verifyEmail = useCallback(async (token: string) => {
+    const { user } = await api.verifyEmail(token);
+    setUser(user);
+  }, []);
+
+  const resendVerification = useCallback(async (email: string) => {
+    await api.resendVerification(email);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, signup, login, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, signup, login, logout, verifyEmail, resendVerification }}
+    >
       {children}
     </AuthContext.Provider>
   );

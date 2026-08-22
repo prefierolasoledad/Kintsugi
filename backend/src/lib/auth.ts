@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
 const JWT_SECRET_ENV = process.env.JWT_SECRET;
@@ -7,10 +8,14 @@ if (!JWT_SECRET_ENV) {
 }
 const JWT_SECRET: string = JWT_SECRET_ENV;
 
-const SESSION_COOKIE = "kintsugi_session";
-const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+export const ACCESS_TOKEN_COOKIE = "kintsugi_access";
+export const REFRESH_TOKEN_COOKIE = "kintsugi_refresh";
 
-export type SessionPayload = {
+const ACCESS_TOKEN_TTL = "15m";
+export const REFRESH_TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes
+
+export type AccessTokenPayload = {
   userId: string;
 };
 
@@ -22,32 +27,56 @@ export function verifyPassword(password: string, hash: string) {
   return bcrypt.compare(password, hash);
 }
 
-export function signSession(payload: SessionPayload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
+export function signAccessToken(payload: AccessTokenPayload) {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL });
 }
 
-export function verifySession(token: string): SessionPayload | null {
+export function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as unknown as SessionPayload;
+    return jwt.verify(token, JWT_SECRET) as unknown as AccessTokenPayload;
   } catch {
     return null;
   }
 }
 
-export function setSessionCookie(res: import("express").Response, token: string) {
-  res.cookie(SESSION_COOKIE, token, {
+export function generateRefreshToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+export function hashToken(token: string) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+export function setAuthCookies(
+  res: import("express").Response,
+  tokens: { accessToken: string; refreshToken: string }
+) {
+  const secure = process.env.NODE_ENV === "production";
+  res.cookie(ACCESS_TOKEN_COOKIE, tokens.accessToken, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_MAX_AGE_MS,
+    secure,
+    maxAge: ACCESS_TOKEN_MAX_AGE_MS,
+    path: "/",
+  });
+  res.cookie(REFRESH_TOKEN_COOKIE, tokens.refreshToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    maxAge: REFRESH_TOKEN_MAX_AGE_MS,
     path: "/",
   });
 }
 
-export function clearSessionCookie(res: import("express").Response) {
-  res.clearCookie(SESSION_COOKIE, { path: "/" });
+export function clearAuthCookies(res: import("express").Response) {
+  res.clearCookie(ACCESS_TOKEN_COOKIE, { path: "/" });
+  res.clearCookie(REFRESH_TOKEN_COOKIE, { path: "/" });
 }
 
-export function getSessionCookie(req: import("express").Request): string | undefined {
-  return req.cookies?.[SESSION_COOKIE];
+export function getAccessTokenCookie(req: import("express").Request): string | undefined {
+  return req.cookies?.[ACCESS_TOKEN_COOKIE];
+}
+
+export function getRefreshTokenCookie(req: import("express").Request): string | undefined {
+  return req.cookies?.[REFRESH_TOKEN_COOKIE];
 }

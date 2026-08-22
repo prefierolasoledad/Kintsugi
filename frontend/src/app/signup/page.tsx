@@ -2,34 +2,81 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Logo from "@/components/Logo";
 import { IMAGES } from "@/lib/images";
+import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 
+type Field = "name" | "email" | "password" | "form";
+
+function WarningIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 8v5m0 3.5h.01M12 3l9 16H3l9-16z" />
+    </svg>
+  );
+}
+
+function FieldError({ message }: { message: string }) {
+  return (
+    <div className="mt-2 flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+      <WarningIcon className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
 export default function SignupPage() {
-  const router = useRouter();
-  const { signup } = useAuth();
+  const { signup, resendVerification } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<{ field: Field; message: string } | null>(null);
+  const [errorNonce, setErrorNonce] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [resent, setResent] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
+    setFieldError(null);
     setSubmitting(true);
     try {
-      await signup({ name, email, password });
-      router.push("/");
+      const { email: confirmedEmail } = await signup({ name, email, password });
+      setSentTo(confirmedEmail);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      const field: Field =
+        err instanceof ApiError && (err.field === "name" || err.field === "email" || err.field === "password")
+          ? err.field
+          : "form";
+      const message = err instanceof Error ? err.message : "Something went wrong.";
+      setFieldError({ field, message });
+      setErrorNonce((n) => n + 1);
     } finally {
       setSubmitting(false);
     }
   }
+
+  async function handleResend() {
+    if (!sentTo) return;
+    await resendVerification(sentTo);
+    setResent(true);
+  }
+
+  const errorFor = (field: Field) => (fieldError?.field === field ? fieldError.message : null);
+  const inputClass = (field: Field) =>
+    `mt-1.5 w-full rounded-2xl border px-3.5 py-2.5 text-sm text-ink outline-none focus:border-gold ${
+      fieldError?.field === field ? "border-red-400" : "border-line bg-paper-card"
+    }`;
 
   return (
     <main className="flex min-h-screen flex-1">
@@ -57,75 +104,119 @@ export default function SignupPage() {
             </span>
           </Link>
 
-          <h1 className="mt-10 font-serif text-3xl font-medium tracking-tight text-ink">
-            Create your account
-          </h1>
-          <p className="mt-2 text-sm text-ink-dim">
-            One account to buy or sell — you can list your first item right after.
-          </p>
+          {sentTo ? (
+            <div className="mt-10">
+              <h1 className="font-serif text-3xl font-medium tracking-tight text-ink">
+                Check your email
+              </h1>
+              <p className="mt-3 text-sm text-ink-dim">
+                We sent a verification link to <strong className="text-ink">{sentTo}</strong>.
+                Click it to activate your account — you won&apos;t be able to log in until
+                you do.
+              </p>
 
-          <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-            <div>
-              <label htmlFor="name" className="text-sm font-medium text-ink">
-                Name
-              </label>
-              <input
-                id="name"
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="mt-1.5 w-full rounded-2xl border border-line bg-paper-card px-3.5 py-2.5 text-sm text-ink outline-none focus:border-gold"
-              />
+              {resent ? (
+                <p className="mt-6 text-sm font-medium text-gold-dim">Sent again.</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  className="mt-6 text-sm font-medium text-gold-dim hover:text-gold"
+                >
+                  Didn&apos;t get it? Resend the link
+                </button>
+              )}
             </div>
+          ) : (
+            <>
+              <h1 className="mt-10 font-serif text-3xl font-medium tracking-tight text-ink">
+                Create your account
+              </h1>
+              <p className="mt-2 text-sm text-ink-dim">
+                One account to buy or sell — you can list your first item right after.
+              </p>
 
-            <div>
-              <label htmlFor="email" className="text-sm font-medium text-ink">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1.5 w-full rounded-2xl border border-line bg-paper-card px-3.5 py-2.5 text-sm text-ink outline-none focus:border-gold"
-              />
-            </div>
+              <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+                <div
+                  key={`name-${errorNonce}`}
+                  className={errorFor("name") ? "animate-field-shake" : undefined}
+                >
+                  <label htmlFor="name" className="text-sm font-medium text-ink">
+                    Name
+                  </label>
+                  <input
+                    id="name"
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className={inputClass("name")}
+                  />
+                  {errorFor("name") && <FieldError message={errorFor("name")!} />}
+                </div>
 
-            <div>
-              <label htmlFor="password" className="text-sm font-medium text-ink">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1.5 w-full rounded-2xl border border-line bg-paper-card px-3.5 py-2.5 text-sm text-ink outline-none focus:border-gold"
-              />
-              <p className="mt-1.5 text-xs text-ink-dim">At least 8 characters.</p>
-            </div>
+                <div
+                  key={`email-${errorNonce}`}
+                  className={errorFor("email") ? "animate-field-shake" : undefined}
+                >
+                  <label htmlFor="email" className="text-sm font-medium text-ink">
+                    Email
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className={inputClass("email")}
+                  />
+                  {errorFor("email") && <FieldError message={errorFor("email")!} />}
+                </div>
 
-            {error && <p className="text-sm text-red-700">{error}</p>}
+                <div
+                  key={`password-${errorNonce}`}
+                  className={errorFor("password") ? "animate-field-shake" : undefined}
+                >
+                  <label htmlFor="password" className="text-sm font-medium text-ink">
+                    Password
+                  </label>
+                  <input
+                    id="password"
+                    type="password"
+                    required
+                    minLength={12}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={inputClass("password")}
+                  />
+                  {errorFor("password") ? (
+                    <FieldError message={errorFor("password")!} />
+                  ) : (
+                    <p className="mt-1.5 text-xs text-ink-dim">
+                      At least 12 characters. We check it against known data breaches.
+                    </p>
+                  )}
+                </div>
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="seam-glow w-full rounded-full bg-gold-dim px-6 py-3 text-sm font-semibold text-paper transition hover:brightness-90 disabled:opacity-60"
-            >
-              {submitting ? "Creating account…" : "Create account"}
-            </button>
-          </form>
+                {errorFor("form") && <FieldError message={errorFor("form")!} />}
 
-          <p className="mt-6 text-center text-sm text-ink-dim">
-            Already have an account?{" "}
-            <Link href="/login" className="font-medium text-gold-dim hover:text-gold">
-              Log in
-            </Link>
-          </p>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="seam-glow w-full rounded-full bg-gold-dim px-6 py-3 text-sm font-semibold text-paper transition hover:brightness-90 disabled:opacity-60"
+                >
+                  {submitting ? "Creating account…" : "Create account"}
+                </button>
+              </form>
+
+              <p className="mt-6 text-center text-sm text-ink-dim">
+                Already have an account?{" "}
+                <Link href="/login" className="font-medium text-gold-dim hover:text-gold">
+                  Log in
+                </Link>
+              </p>
+            </>
+          )}
         </div>
       </div>
     </main>

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { getSessionCookie, verifySession } from "../lib/auth";
+import { getAccessTokenCookie, verifyAccessToken } from "../lib/auth";
 
 declare global {
   namespace Express {
@@ -10,14 +10,14 @@ declare global {
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token = getSessionCookie(req);
-  const session = token ? verifySession(token) : null;
+  const token = getAccessTokenCookie(req);
+  const payload = token ? verifyAccessToken(token) : null;
 
-  if (!session) {
+  if (!payload) {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
 
-  req.userId = session.userId;
+  req.userId = payload.userId;
   next();
 }
