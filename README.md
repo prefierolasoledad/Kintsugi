@@ -24,13 +24,21 @@ A third surface — an admin-gated internal dashboard for watching chaos-test
 runs and pipeline health in real time — is planned but not part of either app
 above; see [Status](#status).
 
+The browser only ever talks to the frontend. Next.js acts as a BFF (Backend
+for Frontend): its own route handlers under `frontend/src/app/api/*` proxy to
+the real backend server-to-server, relaying the session cookie in both
+directions. The browser never learns the backend's actual address, and
+same-origin requests mean no CORS story to maintain on the client side.
+
 ## Status
 
 **Frontend**
 - [x] Marketplace homepage — hero, recently-listed cards, categories, brand
       philosophy, seller flow
 - [x] Signup / login pages, session-aware nav
-- [ ] Category/browse pages
+- [x] Shop category pages, seller/help info pages
+- [x] BFF — `/api/*` route handlers proxy to the backend; the browser never
+      calls it directly
 - [ ] Product detail page
 - [ ] Cart / checkout
 

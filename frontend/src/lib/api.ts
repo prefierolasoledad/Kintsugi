@@ -1,5 +1,3 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-
 export type User = {
   id: string;
   name: string;
@@ -15,9 +13,8 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`/api${path}`, {
     ...options,
-    credentials: "include",
     headers: { "Content-Type": "application/json", ...options.headers },
   });
 
