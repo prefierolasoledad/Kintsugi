@@ -13,4 +13,9 @@ export const IMAGES = {
   recordPlayer: unsplash("1766592946837-ab4454c4a8a3"),
   leatherJacket: unsplash("1623854156816-4c4fc355ffc7"),
   midCenturyChairs: unsplash("1718049719688-764249c6800d"),
+  vintageTypewriter: unsplash("1550777006-9ee6c430227d"),
+  vintageBicycle: unsplash("1743087177786-c580de98fbd8"),
+  brassLamp: unsplash("1551806406-553417833005"),
+  stackOfBooks: unsplash("1755621019856-a22fe8db1292"),
+  browsingClothesRack: unsplash("1753161025529-77b8f4a2322d"),
 };

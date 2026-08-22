@@ -34,10 +34,19 @@ function applySetCookies(cookieHeader: string, setCookies: string[]): string {
   return [...map.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
 }
 
-async function callBackend(backendPath: string, method: string, cookieHeader: string, body: string | null) {
+async function callBackend(
+  backendPath: string,
+  method: string,
+  cookieHeader: string,
+  body: ArrayBuffer | null,
+  contentType: string | null
+) {
+  const headers: Record<string, string> = { cookie: cookieHeader };
+  if (contentType) headers["content-type"] = contentType;
+
   const res = await fetch(`${BACKEND_URL}${backendPath}`, {
     method,
-    headers: { "Content-Type": "application/json", cookie: cookieHeader },
+    headers,
     body: body ?? undefined,
   });
   const text = res.status === 204 ? null : await res.text();
@@ -46,17 +55,25 @@ async function callBackend(backendPath: string, method: string, cookieHeader: st
 
 export async function proxyToBackend(req: NextRequest, backendPath: string) {
   const originalCookieHeader = req.headers.get("cookie") ?? "";
-  const body = req.method === "GET" || req.method === "HEAD" ? null : await req.text();
 
-  let result = await callBackend(backendPath, req.method, originalCookieHeader, body);
+  // Buffered rather than streamed, and as bytes rather than text: image uploads
+  // are multipart binary that text() would corrupt, and the refresh-and-retry
+  // path below has to be able to send the same body a second time.
+  const body =
+    req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
+
+  // Forwarded as-is so multipart boundaries survive; JSON callers set their own.
+  const contentType = req.headers.get("content-type");
+
+  let result = await callBackend(backendPath, req.method, originalCookieHeader, body, contentType);
   let extraSetCookies: string[] = [];
 
   if (result.status === 401 && !NO_REFRESH_RETRY.has(backendPath)) {
-    const refresh = await callBackend("/auth/refresh", "POST", originalCookieHeader, null);
+    const refresh = await callBackend("/auth/refresh", "POST", originalCookieHeader, null, null);
 
     if (refresh.status === 204 && refresh.setCookies.length > 0) {
       const retryCookieHeader = applySetCookies(originalCookieHeader, refresh.setCookies);
-      result = await callBackend(backendPath, req.method, retryCookieHeader, body);
+      result = await callBackend(backendPath, req.method, retryCookieHeader, body, contentType);
       extraSetCookies = refresh.setCookies;
     }
   }

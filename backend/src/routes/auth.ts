@@ -44,6 +44,7 @@ function publicUser(user: {
   email: string;
   isSeller: boolean;
   emailVerified: boolean;
+  createdAt: Date;
 }) {
   return {
     id: user.id,
@@ -51,6 +52,7 @@ function publicUser(user: {
     email: user.email,
     isSeller: user.isSeller,
     emailVerified: user.emailVerified,
+    createdAt: user.createdAt,
   };
 }
 
@@ -207,5 +209,29 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
+  res.json({ user: publicUser(user) });
+});
+
+authRouter.post("/become-seller", requireAuth, async (req, res) => {
+  const userId = req.userId!;
+
+  // The flag and the profile have to move together. A user with isSeller but no
+  // SellerProfile could not own a listing, and a profile without the flag would
+  // be invisible to the UI — so both happen in one transaction or neither does.
+  const user = await prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: userId },
+      data: { isSeller: true },
+    });
+
+    await tx.sellerProfile.upsert({
+      where: { userId },
+      update: {},
+      create: { userId, shopName: updated.name },
+    });
+
+    return updated;
+  });
+
   res.json({ user: publicUser(user) });
 });

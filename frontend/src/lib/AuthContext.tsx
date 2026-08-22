@@ -12,6 +12,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   verifyEmail: (token: string) => Promise<void>;
   resendVerification: (email: string) => Promise<void>;
+  becomeSeller: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -54,9 +55,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await api.resendVerification(email);
   }, []);
 
+  const becomeSeller = useCallback(async () => {
+    const { user } = await api.becomeSeller();
+    setUser(user);
+  }, []);
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, signup, login, logout, verifyEmail, resendVerification }}
+      value={{ user, loading, signup, login, logout, verifyEmail, resendVerification, becomeSeller }}
     >
       {children}
     </AuthContext.Provider>

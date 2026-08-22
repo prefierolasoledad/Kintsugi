@@ -12,6 +12,7 @@ const COLUMNS = [
       { label: "Clothing & Accessories", href: "/shop/clothing-accessories" },
       { label: "Music, Film & Books", href: "/shop/music-film-books" },
       { label: "Décor & Curiosities", href: "/shop/decor-curiosities" },
+      { label: "Bikes & Outdoors", href: "/shop/bikes-outdoors" },
     ],
   },
   {
@@ -39,7 +40,7 @@ export default function Footer() {
 
   return (
     <footer className="border-t border-line bg-paper-card px-6 py-14">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-[1400px]">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-5">
           <div className="lg:col-span-2">
             <div className="flex items-center gap-2.5">

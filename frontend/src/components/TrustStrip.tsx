@@ -18,7 +18,7 @@ const POINTS = [
 export default function TrustStrip() {
   return (
     <section className="border-b border-line bg-sand px-6 py-8">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-center gap-6 sm:flex-row sm:gap-12">
+      <div className="mx-auto flex max-w-[1400px] flex-col items-center justify-center gap-6 sm:flex-row sm:gap-12">
         {POINTS.map((point) => (
           <div key={point.label} className="flex items-center gap-2.5">
             <svg

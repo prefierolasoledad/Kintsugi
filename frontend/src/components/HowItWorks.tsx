@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useAuth } from "@/lib/AuthContext";
 
 const STEPS = [
   {
@@ -19,9 +22,11 @@ const STEPS = [
 ];
 
 export default function HowItWorks() {
+  const { user } = useAuth();
+
   return (
     <section id="sell" className="bg-butter px-6 py-24">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-[1400px]">
         <div className="max-w-2xl">
           <h2 className="font-serif text-3xl font-medium tracking-tight text-ink sm:text-4xl">
             Sell in <span className="text-gradient-gold">three steps.</span>
@@ -52,10 +57,10 @@ export default function HowItWorks() {
 
         <div className="mt-12 flex justify-center">
           <Link
-            href="/signup"
+            href={user ? "/account" : "/signup"}
             className="seam-glow rounded-full bg-gold-dim px-6 py-3 text-sm font-semibold text-paper transition hover:brightness-90"
           >
-            Start selling
+            {user ? "Go start selling" : "Start selling"}
           </Link>
         </div>
       </div>

@@ -5,7 +5,7 @@ import { IMAGES } from "@/lib/images";
 export default function Hero() {
   return (
     <section id="top" className="relative overflow-hidden bg-blush">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-center gap-12 px-6 py-16 lg:flex-row lg:justify-between lg:gap-8 lg:py-20">
+      <div className="mx-auto flex max-w-[1400px] flex-col items-center justify-center gap-12 px-6 py-16 lg:flex-row lg:justify-between lg:gap-8 lg:py-20">
         <div className="text-center lg:w-1/2 lg:text-left">
           <span className="inline-flex items-center gap-2 rounded-full border border-gold/40 bg-paper/60 px-4 py-1 text-xs font-medium tracking-wide text-gold-dim uppercase">
             Secondhand, chosen with care

@@ -19,6 +19,9 @@ frontend/next-env.d.ts
 backend/dist/
 backend/src/generated/
 
+# seller-uploaded images (local dev storage; object storage in production)
+backend/uploads/
+
 # testing
 coverage/
 

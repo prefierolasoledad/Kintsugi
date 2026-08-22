@@ -16,12 +16,16 @@ function Star({ fill }: { fill: number }) {
   );
 }
 
+/**
+ * `count` is the number of reviews behind the average. Omit it when showing a
+ * single review's own stars — there's no aggregate to report there.
+ */
 export default function StarRating({
   rating,
   count,
 }: {
   rating: number;
-  count: number;
+  count?: number;
 }) {
   return (
     <div className="flex items-center gap-1.5">
@@ -30,9 +34,11 @@ export default function StarRating({
           <Star key={i} fill={Math.max(0, Math.min(1, rating - i))} />
         ))}
       </div>
-      <span className="text-xs text-ink-dim">
-        {rating.toFixed(1)} ({count})
-      </span>
+      {count !== undefined && (
+        <span className="text-xs text-ink-dim">
+          {rating.toFixed(1)} ({count})
+        </span>
+      )}
     </div>
   );
 }

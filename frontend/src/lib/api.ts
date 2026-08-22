@@ -4,6 +4,7 @@ export type User = {
   email: string;
   isSeller: boolean;
   emailVerified: boolean;
+  createdAt: string;
 };
 
 export class ApiError extends Error {
@@ -71,4 +72,8 @@ export function resendVerification(email: string) {
     method: "POST",
     body: JSON.stringify({ email }),
   });
+}
+
+export function becomeSeller() {
+  return request<{ user: User }>("/auth/become-seller", { method: "POST" });
 }

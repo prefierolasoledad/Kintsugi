@@ -4,7 +4,7 @@ import { IMAGES } from "@/lib/images";
 export default function Philosophy() {
   return (
     <section id="philosophy" className="bg-lavender-tint px-6 py-24">
-      <div className="mx-auto grid max-w-6xl items-center gap-12 md:grid-cols-2">
+      <div className="mx-auto grid max-w-[1400px] items-center gap-12 md:grid-cols-2">
         <div className="relative h-80 overflow-hidden rounded-3xl border border-line shadow-sm md:h-96">
           <Image
             src={IMAGES.kintsugiPlate}
