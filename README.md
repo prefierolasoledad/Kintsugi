@@ -138,6 +138,8 @@ return the license asks three things:
 Sample images in the seed data come from [Unsplash](https://unsplash.com) under
 the Unsplash License and aren't covered by the grant above.
 
-Commits are signed, so `Verified` on GitHub means a commit genuinely came from
-the holder of the signing key rather than from anyone who typed the right name
-into a Git config.
+Commits from the Apache 2.0 change onward are signed, so `Verified` on GitHub
+means a commit genuinely came from the holder of the signing key rather than
+from anyone who typed the right name into a Git config. Earlier commits predate
+signing and are unsigned; rewriting them would destroy the timestamps that
+establish authorship in the first place.
