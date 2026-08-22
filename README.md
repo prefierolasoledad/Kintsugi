@@ -126,10 +126,18 @@ replacing it properly would involve.
 
 ## License
 
-[MIT](LICENSE) © Karan Bhatt
+[Apache License 2.0](LICENSE) © 2026 Karan Bhatt
 
-You're free to use, modify, and distribute this — including commercially — as
-long as the copyright notice stays with it.
+You're free to use, modify, and distribute this, including commercially. In
+return the license asks three things:
 
-Commits in this repository are signed, so `Verified` on GitHub means the commit
-genuinely came from the holder of the signing key.
+- Keep the copyright and attribution notices, including [`NOTICE`](NOTICE)
+- Mark any files you change as changed
+- Don't use the Kintsugi name to promote your own version
+
+Sample images in the seed data come from [Unsplash](https://unsplash.com) under
+the Unsplash License and aren't covered by the grant above.
+
+Commits are signed, so `Verified` on GitHub means a commit genuinely came from
+the holder of the signing key rather than from anyone who typed the right name
+into a Git config.
