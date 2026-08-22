@@ -1,28 +1,6 @@
 import Image from "next/image";
-import { IMAGES } from "@/lib/images";
-
-const CATEGORIES = [
-  {
-    title: "Furniture & Home",
-    description: "Solid wood, well-worn, built before things were made to be replaced.",
-    image: IMAGES.antiqueFurniture,
-  },
-  {
-    title: "Clothing & Accessories",
-    description: "Vintage and pre-loved pieces, picked for cut and quality.",
-    image: IMAGES.clothingRack,
-  },
-  {
-    title: "Music, Film & Books",
-    description: "Vinyl, film, and paperbacks that already found one good home.",
-    image: IMAGES.vinylRecords,
-  },
-  {
-    title: "Décor & Curiosities",
-    description: "Small objects with more history than a price tag can explain.",
-    image: IMAGES.vintageTrinkets,
-  },
-];
+import Link from "next/link";
+import { CATEGORIES } from "@/lib/listings";
 
 export default function Categories() {
   return (
@@ -39,13 +17,13 @@ export default function Categories() {
 
         <div className="mt-12 grid gap-6 sm:grid-cols-2">
           {CATEGORIES.map((category) => (
-            <a
-              key={category.title}
-              href="#"
-              className="group relative block h-72 overflow-hidden rounded-2xl border border-line"
+            <Link
+              key={category.slug}
+              href={`/shop/${category.slug}`}
+              className="group relative block h-72 overflow-hidden rounded-3xl border border-line shadow-sm transition hover:shadow-lg"
             >
               <Image
-                src={category.image}
+                src={category.coverImage}
                 alt={category.title}
                 fill
                 sizes="(min-width: 640px) 50vw, 100vw"
@@ -60,7 +38,7 @@ export default function Categories() {
                   {category.description}
                 </p>
               </div>
-            </a>
+            </Link>
           ))}
         </div>
       </div>

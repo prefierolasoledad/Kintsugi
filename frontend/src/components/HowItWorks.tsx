@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const STEPS = [
   {
     title: "List it",
@@ -18,7 +20,7 @@ const STEPS = [
 
 export default function HowItWorks() {
   return (
-    <section id="sell" className="px-6 py-24">
+    <section id="sell" className="bg-butter px-6 py-24">
       <div className="mx-auto max-w-6xl">
         <div className="max-w-2xl">
           <h2 className="font-serif text-3xl font-medium tracking-tight text-ink sm:text-4xl">
@@ -33,7 +35,7 @@ export default function HowItWorks() {
           {STEPS.map((step, i) => (
             <div
               key={step.title}
-              className="rounded-2xl border border-line bg-paper-card p-6"
+              className="rounded-3xl border border-line bg-paper-card p-6 shadow-sm transition hover:shadow-md"
             >
               <span className="font-mono text-sm text-gold-dim">
                 {String(i + 1).padStart(2, "0")}
@@ -49,12 +51,12 @@ export default function HowItWorks() {
         </div>
 
         <div className="mt-12 flex justify-center">
-          <a
-            href="#"
-            className="seam-glow rounded-full bg-gold px-6 py-3 text-sm font-semibold text-ink transition hover:bg-gold-bright"
+          <Link
+            href="/signup"
+            className="seam-glow rounded-full bg-gold-dim px-6 py-3 text-sm font-semibold text-paper transition hover:brightness-90"
           >
             Start selling
-          </a>
+          </Link>
         </div>
       </div>
     </section>

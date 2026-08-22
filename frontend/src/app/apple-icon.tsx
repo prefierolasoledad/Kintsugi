@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { CrackDisc } from "@/lib/brandMark";
+import { MendedHeart } from "@/lib/brandMark";
 
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
@@ -14,10 +14,10 @@ export default function AppleIcon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#0a0908",
+          background: "#fdf6f0",
         }}
       >
-        <CrackDisc size={150} borderWidth={6} />
+        <MendedHeart size={150} />
       </div>
     ),
     { ...size }

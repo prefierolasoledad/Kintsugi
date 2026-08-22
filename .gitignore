@@ -17,6 +17,7 @@ frontend/next-env.d.ts
 
 # backend
 backend/dist/
+backend/src/generated/
 
 # testing
 coverage/

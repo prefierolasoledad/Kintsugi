@@ -29,12 +29,16 @@ above; see [Status](#status).
 **Frontend**
 - [x] Marketplace homepage — hero, recently-listed cards, categories, brand
       philosophy, seller flow
+- [x] Signup / login pages, session-aware nav
 - [ ] Category/browse pages
 - [ ] Product detail page
 - [ ] Cart / checkout
 
 **Backend**
 - [x] Express skeleton with a `/health` endpoint
+- [x] Auth — unified account (buyer and seller are the same account; selling
+      is a capability, not a separate account type), email/password,
+      Postgres via Prisma, JWT session in an httpOnly cookie
 - [ ] `order-service` (Postgres, range-partitioned `orders` table)
 - [ ] Kafka backbone (`order.created`, `payment.completed` / `payment.failed`)
 - [ ] `payment-service` (simulated payment, publishes back to Kafka)
@@ -49,6 +53,20 @@ above; see [Status](#status).
 
 ## Running locally
 
+**Database** (Postgres via Docker):
+```
+docker compose up -d
+```
+
+**Backend** (Express, [http://localhost:4000](http://localhost:4000)):
+```
+cd backend
+npm install
+cp .env.example .env   # first time only
+npx prisma migrate dev
+npm run dev
+```
+
 **Frontend** (Next.js, [http://localhost:3000](http://localhost:3000)):
 ```
 cd frontend
@@ -56,14 +74,7 @@ npm install
 npm run dev
 ```
 
-**Backend** (Express, [http://localhost:4000](http://localhost:4000)):
-```
-cd backend
-npm install
-npm run dev
-```
-
 ## Stack
 
-Next.js · TypeScript · Tailwind CSS · Node.js/Express · PostgreSQL · Kafka ·
-Redis · Prometheus/Grafana
+Next.js · TypeScript · Tailwind CSS · Node.js/Express · PostgreSQL · Prisma ·
+Kafka · Redis · Prometheus/Grafana

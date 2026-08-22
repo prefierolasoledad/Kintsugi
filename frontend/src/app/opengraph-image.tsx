@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { CrackDisc } from "@/lib/brandMark";
+import { MendedHeart } from "@/lib/brandMark";
 
 export const alt = "Kintsugi — Beautifully Secondhand";
 export const size = { width: 1200, height: 630 };
@@ -16,17 +16,17 @@ export default function OpengraphImage() {
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          background: "#0a0908",
+          background: "#fdf6f0",
         }}
       >
-        <CrackDisc size={140} borderWidth={5} />
+        <MendedHeart size={140} />
 
         <div
           style={{
             marginTop: 36,
             fontSize: 72,
             fontWeight: 600,
-            color: "#f3ede2",
+            color: "#453734",
             letterSpacing: -1,
             display: "flex",
           }}
@@ -38,7 +38,7 @@ export default function OpengraphImage() {
           style={{
             marginTop: 16,
             fontSize: 28,
-            color: "#b8ae9c",
+            color: "#756456",
             display: "flex",
           }}
         >

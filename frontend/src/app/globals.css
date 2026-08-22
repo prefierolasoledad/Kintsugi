@@ -1,25 +1,33 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5efe3;
-  --foreground: #241f17;
+  --background: #fdf6f0;
+  --foreground: #453734;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-nunito);
   --font-mono: var(--font-geist-mono);
-  --font-serif: var(--font-fraunces);
+  --font-serif: var(--font-quicksand);
 
-  --color-paper: #f5efe3;
-  --color-paper-card: #fbf7ee;
-  --color-ink: #241f17;
-  --color-ink-dim: #6f6656;
-  --color-line: #e2d5bb;
-  --color-gold: #a9782a;
-  --color-gold-bright: #c9973f;
-  --color-gold-dim: #8a6423;
+  --color-paper: #fdf6f0;
+  --color-paper-card: #ffffff;
+  --color-ink: #453734;
+  --color-ink-dim: #756456;
+  --color-line: #f0dfd6;
+  --color-gold: #d9694c;
+  --color-gold-bright: #e8917a;
+  --color-gold-dim: #a8492f;
+  --color-sage: #94bb90;
+  --color-sage-dim: #4c6b46;
+  --color-star: #f6c667;
+
+  --color-blush: #fbe6dd;
+  --color-sand: #f5e6d3;
+  --color-lavender-tint: #eee6f7;
+  --color-butter: #fbf0d8;
 }
 
 body {
@@ -36,5 +44,5 @@ body {
 }
 
 .seam-glow {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-gold) 30%, transparent), 0 0 40px -12px color-mix(in srgb, var(--color-gold) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-gold) 25%, transparent), 0 8px 24px -8px color-mix(in srgb, var(--color-gold) 40%, transparent);
 }

@@ -3,9 +3,9 @@ import { IMAGES } from "@/lib/images";
 
 export default function Philosophy() {
   return (
-    <section id="philosophy" className="px-6 py-24">
+    <section id="philosophy" className="bg-lavender-tint px-6 py-24">
       <div className="mx-auto grid max-w-6xl items-center gap-12 md:grid-cols-2">
-        <div className="relative h-80 overflow-hidden rounded-2xl border border-line md:h-96">
+        <div className="relative h-80 overflow-hidden rounded-3xl border border-line shadow-sm md:h-96">
           <Image
             src={IMAGES.kintsugiPlate}
             alt="A ceramic plate repaired with gold seams, in the Japanese kintsugi style"

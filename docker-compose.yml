@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kintsugi
+      POSTGRES_PASSWORD: kintsugi
+      POSTGRES_DB: kintsugi
+    ports:
+      # host 5433, not the default 5432 -- avoids clashing with a native
+      # Postgres install already listening on 5432. Adjust if that's not
+      # a concern on your machine, but keep it in sync with DATABASE_URL.
+      - "5433:5432"
+    volumes:
+      - kintsugi-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kintsugi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  kintsugi-postgres:

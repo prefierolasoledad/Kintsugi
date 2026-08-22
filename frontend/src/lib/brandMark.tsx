@@ -1,49 +1,17 @@
-const SEGMENTS = [
-  { left: -0.05, top: 0.33, width: 0.62, height: 0.035, rotate: 13 },
-  { left: 0.32, top: 0.46, width: 0.42, height: 0.035, rotate: -22 },
-  { left: 0.6, top: 0.56, width: 0.62, height: 0.035, rotate: 9 },
-];
-
-export function CrackDisc({
-  size,
-  borderWidth,
-  background = "#14120f",
-  border = "#caa04a",
-  crackColor = "#f0c869",
-}: {
-  size: number;
-  borderWidth: number;
-  background?: string;
-  border?: string;
-  crackColor?: string;
-}) {
+export function MendedHeart({ size }: { size: number }) {
   return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background,
-        border: `${borderWidth}px solid ${border}`,
-        position: "relative",
-        display: "flex",
-        overflow: "hidden",
-      }}
-    >
-      {SEGMENTS.map((seg, i) => (
-        <div
-          key={i}
-          style={{
-            position: "absolute",
-            left: seg.left * size,
-            top: seg.top * size,
-            width: seg.width * size,
-            height: Math.max(seg.height * size, 3),
-            background: crackColor,
-            transform: `rotate(${seg.rotate}deg)`,
-          }}
-        />
-      ))}
-    </div>
+    <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
+      <circle cx="20" cy="20" r="17" fill="#fbe6dd" stroke="#a8492f" strokeOpacity={0.3} strokeWidth={1.5} />
+      <path
+        d="M20 28 C20 28 9 19.5 9 12.5 C9 8 12.5 5 16 5 C18 5 19.5 6.8 20 9 C20.5 6.8 22 5 24 5 C27.5 5 31 8 31 12.5 C31 19.5 20 28 20 28 Z"
+        fill="#a8492f"
+      />
+      <g stroke="#fdf6f0" strokeWidth={2} strokeLinecap="round">
+        <line x1="11" y1="15" x2="14" y2="15" />
+        <line x1="16" y1="15" x2="19" y2="15" />
+        <line x1="21" y1="15" x2="24" y2="15" />
+        <line x1="26" y1="15" x2="29" y2="15" />
+      </g>
+    </svg>
   );
 }
