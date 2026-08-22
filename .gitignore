@@ -22,6 +22,14 @@ backend/src/generated/
 # seller-uploaded images (local dev storage; object storage in production)
 backend/uploads/
 
+# AI coding-tool config and the vendored reference docs they install. Local
+# tooling rather than project code, and not ours to redistribute under this
+# repository's license.
+.agents/
+.claude/
+.windsurf/
+skills-lock.json
+
 # testing
 coverage/
 
