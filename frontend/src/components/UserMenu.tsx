@@ -1,16 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Avatar from "@/components/Avatar";
 import type { User } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import { useDismissable } from "@/lib/useDismissable";
-
-function getInitials(name: string) {
-  const parts = name.trim().split(/\s+/);
-  const first = parts[0]?.[0] ?? "";
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
-  return (first + last).toUpperCase();
-}
 
 export default function UserMenu({ user }: { user: User }) {
   const { logout } = useAuth();
@@ -23,9 +17,10 @@ export default function UserMenu({ user }: { user: User }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-gold-dim text-sm font-semibold text-paper transition hover:brightness-90"
+        aria-label="Your account"
+        className="rounded-full transition hover:brightness-90"
       >
-        {getInitials(user.name)}
+        <Avatar name={user.name} src={user.avatarUrl} size={36} />
       </button>
 
       {open && (

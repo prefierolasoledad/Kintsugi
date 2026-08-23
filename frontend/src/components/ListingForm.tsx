@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import PhotoPicker from "@/components/PhotoPicker";
 import { ApiError } from "@/lib/api";
 import { CONDITION_OPTIONS, type CatalogCategory } from "@/lib/catalog";
 import {
@@ -19,10 +20,17 @@ export default function ListingForm({
   initial,
   submitLabel,
   onSubmit,
+  collectPhotos = false,
+  progress,
 }: {
   initial?: SellerListing;
   submitLabel: string;
-  onSubmit: (input: ListingInput) => Promise<void>;
+  onSubmit: (input: ListingInput, photos: File[]) => Promise<void>;
+  /** Show the photo picker. Used when creating, since no listing exists yet to
+   *  attach uploads to. Editing manages photos separately. */
+  collectPhotos?: boolean;
+  /** Caller-supplied status line, e.g. "Uploading photo 2 of 3…". */
+  progress?: string | null;
 }) {
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [title, setTitle] = useState(initial?.title ?? "");
@@ -35,6 +43,7 @@ export default function ListingForm({
     centsToDollars(initial?.originalPriceCents ?? null)
   );
   const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1));
+  const [photos, setPhotos] = useState<File[]>([]);
 
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -97,16 +106,19 @@ export default function ListingForm({
 
     setSaving(true);
     try {
-      await onSubmit({
-        title: title.trim(),
-        description: description.trim(),
-        categoryId,
-        condition,
-        conditionNote: conditionNote.trim() || null,
-        priceCents,
-        originalPriceCents: originalCents,
-        quantity: qty,
-      });
+      await onSubmit(
+        {
+          title: title.trim(),
+          description: description.trim(),
+          categoryId,
+          condition,
+          conditionNote: conditionNote.trim() || null,
+          priceCents,
+          originalPriceCents: originalCents,
+          quantity: qty,
+        },
+        photos
+      );
     } catch (err) {
       if (err instanceof ApiError && err.field) {
         setFieldError({ field: err.field, message: err.message });
@@ -122,6 +134,11 @@ export default function ListingForm({
 
   return (
     <form onSubmit={handleSubmit} className="mt-8 grid gap-6" noValidate>
+      {/* Photos first — it's what a seller reaches for before anything else. */}
+      {collectPhotos && (
+        <PhotoPicker files={photos} onChange={setPhotos} disabled={saving} />
+      )}
+
       <div>
         <label htmlFor="title" className={labelClass}>
           Title
@@ -271,7 +288,7 @@ export default function ListingForm({
         </p>
       )}
 
-      <div>
+      <div className="flex flex-wrap items-center gap-4">
         <button
           type="submit"
           disabled={saving}
@@ -279,6 +296,7 @@ export default function ListingForm({
         >
           {saving ? "Saving…" : submitLabel}
         </button>
+        {progress && <span className="text-sm text-ink-dim">{progress}</span>}
       </div>
     </form>
   );

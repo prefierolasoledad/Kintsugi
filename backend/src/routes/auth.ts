@@ -44,6 +44,7 @@ function publicUser(user: {
   email: string;
   isSeller: boolean;
   emailVerified: boolean;
+  avatarUrl: string | null;
   createdAt: Date;
 }) {
   return {
@@ -52,6 +53,7 @@ function publicUser(user: {
     email: user.email,
     isSeller: user.isSeller,
     emailVerified: user.emailVerified,
+    avatarUrl: user.avatarUrl,
     createdAt: user.createdAt,
   };
 }

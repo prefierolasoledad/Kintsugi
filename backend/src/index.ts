@@ -6,6 +6,8 @@ import { UPLOAD_DIR } from "./lib/storage";
 import { authRouter } from "./routes/auth";
 import { catalogRouter } from "./routes/catalog";
 import { sellerRouter } from "./routes/seller";
+import { profileRouter } from "./routes/profile";
+import { reservationsRouter } from "./routes/reservations";
 import { sellerVerificationRouter } from "./routes/sellerVerification";
 
 const app = express();
@@ -38,6 +40,8 @@ app.get("/health", (_req, res) => {
 
 app.use("/auth", authRouter);
 app.use("/catalog", catalogRouter);
+app.use("/profile", profileRouter);
+app.use("/reservations", reservationsRouter);
 // Verification is mounted first so its routes aren't shadowed by the listing
 // router's own paths.
 app.use("/seller", sellerVerificationRouter);

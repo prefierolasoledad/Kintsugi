@@ -13,6 +13,8 @@ type AuthContextValue = {
   verifyEmail: (token: string) => Promise<void>;
   resendVerification: (email: string) => Promise<void>;
   becomeSeller: () => Promise<void>;
+  setAvatar: (file: File) => Promise<void>;
+  clearAvatar: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -60,9 +62,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(user);
   }, []);
 
+  // The API returns the updated user, so the avatar refreshes everywhere it
+  // renders — nav, account page — without a reload.
+  const setAvatar = useCallback(async (file: File) => {
+    const { user } = await api.uploadAvatar(file);
+    setUser(user);
+  }, []);
+
+  const clearAvatar = useCallback(async () => {
+    const { user } = await api.removeAvatar();
+    setUser(user);
+  }, []);
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, signup, login, logout, verifyEmail, resendVerification, becomeSeller }}
+      value={{
+        user,
+        loading,
+        signup,
+        login,
+        logout,
+        verifyEmail,
+        resendVerification,
+        becomeSeller,
+        setAvatar,
+        clearAvatar,
+      }}
     >
       {children}
     </AuthContext.Provider>

@@ -64,9 +64,12 @@ stored. Only a provider session reference, document type, country, outcome, and
 timestamp.
 → [ADR 0006](docs/adr/0006-kyc-store-reference-not-document.md)
 
-**SQL injection.** All database access goes through Prisma's query builder,
-which parameterises. There is no raw SQL in the codebase; `$queryRaw` with
-interpolation would reintroduce the risk.
+**SQL injection.** Database access goes through Prisma's query builder, which
+parameterises. There is exactly one raw SQL statement — the `SELECT … FOR UPDATE`
+that locks a listing row during reservation, which the query builder cannot
+express. Its parameters go through Prisma's tagged template rather than string
+concatenation, and every write around it is a normal Prisma call.
+→ [ADR 0012](docs/adr/0012-row-locking-for-reservations.md)
 
 **Boundaries.** The browser never reaches Express directly. The BFF forwards
 without interpreting and is therefore *not* a security control — every rule is

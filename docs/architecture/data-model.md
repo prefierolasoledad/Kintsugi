@@ -18,6 +18,8 @@ erDiagram
     Category ||--o{ Listing : contains
     Listing ||--o{ ListingImage : has
     Listing ||--o{ Review : receives
+    Listing ||--o{ Reservation : "holds against"
+    User ||--o{ Reservation : places
 ```
 
 ## Tables
@@ -34,6 +36,7 @@ The account. One row per person, whether they buy, sell, or both.
 | `name` | text | |
 | `isSeller` | bool | Capability flag, not an account type |
 | `emailVerified` | bool | Login is blocked until true |
+| `avatarUrl` | text? | Public URL of the stored avatar. **The image lives in object storage, never here.** Null falls back to generated initials |
 | `createdAt` / `updatedAt` | timestamp | |
 
 ### `refresh_tokens`
@@ -151,6 +154,29 @@ metadata; originals are never persisted.
 displayed rating always corresponds to reviews that exist.
 → [ADR 0009](../adr/0009-computed-ratings.md)
 
+### `reservations`
+
+A time-limited hold on stock, taken before checkout. Only `HELD` rows consume
+availability.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `listingId` | uuid | FK, cascade, indexed |
+| `userId` | uuid | FK → users, cascade |
+| `quantity` | int | How much stock this hold consumes |
+| `status` | enum | `HELD` → `RELEASED` \| `CONVERTED` \| `EXPIRED` |
+| `expiresAt` | timestamp | 15 minutes from creation, indexed |
+| `releasedAt` | timestamp? | Set when released or expired |
+
+A **partial unique index** — `("listingId","userId") WHERE status = 'HELD'` —
+enforces one live hold per buyer per listing. It is hand-written in the migration
+because Prisma cannot express partial indexes, and a plain `@@unique` would also
+constrain `RELEASED` rows and stop a buyer re-reserving something they let go.
+
+Availability is decided under a `SELECT … FOR UPDATE` lock on the listing row, so
+two buyers can never both claim the same unique item.
+→ [ADR 0012](../adr/0012-row-locking-for-reservations.md)
+
 ---
 
 ## Enums
@@ -160,6 +186,7 @@ displayed rating always corresponds to reviews that exist.
 | `ListingStatus` | `DRAFT`, `ACTIVE`, `RESERVED`, `SOLD`, `REMOVED` |
 | `Condition` | `LIKE_NEW`, `GOOD`, `WELL_LOVED`, `NEEDS_REPAIR` |
 | `VerificationStatus` | `UNSTARTED`, `PENDING`, `VERIFIED`, `REJECTED` |
+| `ReservationStatus` | `HELD`, `RELEASED`, `CONVERTED`, `EXPIRED` |
 
 ## Invariants
 
@@ -174,6 +201,10 @@ Enforced in the application layer unless noted:
 5. `originalPriceCents > priceCents` when set.
 6. One review per `(listing, author)` — enforced by the database.
 7. A listing's `slug` never changes after creation.
+8. `Listing.quantity` never goes negative — enforced by deciding availability
+   under a row lock, not by a check constraint.
+9. At most one `HELD` reservation per (listing, buyer) — enforced by the
+   database.
 
 ## Migrations
 
@@ -185,6 +216,8 @@ Enforced in the application layer unless noted:
 | `add_catalog_and_seller_profiles` | `seller_profiles`, `categories`, `listings`, `listing_images`, `reviews`, all three enums |
 | `add_featured_flag` | `listings.featured` |
 | `add_kyc_attempts` | `kyc_attempts` |
+| `add_user_avatar` | `users.avatarUrl` |
+| `add_reservations` | `reservations`, `ReservationStatus`, partial unique index |
 
 ```bash
 npx prisma migrate dev --name <name>   # create + apply

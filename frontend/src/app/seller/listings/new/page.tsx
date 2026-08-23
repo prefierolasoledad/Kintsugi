@@ -2,27 +2,65 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Footer from "@/components/Footer";
 import ListingForm from "@/components/ListingForm";
 import Nav from "@/components/Nav";
+import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
-import { createListing, type ListingInput } from "@/lib/sellerApi";
+import {
+  createListing,
+  publishListing,
+  uploadListingImage,
+  type ListingInput,
+} from "@/lib/sellerApi";
 
 export default function NewListingPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
+  const [progress, setProgress] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
     if (!loading && user && !user.isSeller) router.push("/seller");
   }, [loading, user, router]);
 
-  async function handleSubmit(input: ListingInput) {
+  async function handleSubmit(input: ListingInput, photos: File[]) {
+    // The listing has to exist before images can attach to it, so this is one
+    // action from the seller's point of view and three calls underneath.
     const { listing } = await createListing(input);
-    // Straight to the edit page: photos need a listing to attach to, and a
-    // listing can't be published without one.
-    router.push(`/seller/listings/${listing.id}?created=1`);
+
+    let uploaded = 0;
+    const failed: string[] = [];
+
+    for (const [index, file] of photos.entries()) {
+      setProgress(`Uploading photo ${index + 1} of ${photos.length}…`);
+      try {
+        await uploadListingImage(listing.id, file);
+        uploaded++;
+      } catch {
+        failed.push(file.name);
+      }
+    }
+
+    // A photo is the only thing publishing requires, so if one landed we can
+    // take the seller straight to a live listing.
+    let published = false;
+    if (uploaded > 0) {
+      setProgress("Publishing…");
+      try {
+        await publishListing(listing.id);
+        published = true;
+      } catch {
+        // Left as a draft; the editor explains what's needed.
+      }
+    }
+
+    const params = new URLSearchParams({ created: "1" });
+    if (published) params.set("published", "1");
+    if (failed.length) params.set("failed", String(failed.length));
+
+    router.push(`/seller/listings/${listing.id}?${params}`);
   }
 
   if (loading || !user) {
@@ -53,11 +91,17 @@ export default function NewListingPage() {
             List an item
           </h1>
           <p className="mt-3 text-sm text-ink-dim">
-            Saved as a draft first. You&apos;ll add photos on the next step, then publish
-            when it&apos;s ready.
+            Add photos and the details, and it goes live as soon as you save. Say
+            what&apos;s wrong with it as well as what&apos;s right — buyers here expect
+            that.
           </p>
 
-          <ListingForm submitLabel="Save draft" onSubmit={handleSubmit} />
+          <ListingForm
+            submitLabel="Publish listing"
+            collectPhotos
+            progress={progress}
+            onSubmit={handleSubmit}
+          />
         </div>
       </main>
       <Footer />

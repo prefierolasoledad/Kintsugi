@@ -25,6 +25,8 @@ export default function EditListingPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const justCreated = searchParams.get("created") === "1";
+  const justPublished = searchParams.get("published") === "1";
+  const failedUploads = Number(searchParams.get("failed") ?? 0);
   const { user, loading } = useAuth();
 
   const [listing, setListing] = useState<SellerListing | null>(null);
@@ -160,9 +162,27 @@ export default function EditListingPage() {
                 )}
               </div>
 
-              {justCreated && (
+              {justCreated && justPublished && (
                 <p className="mt-5 rounded-xl border border-sage/50 bg-sage/20 px-4 py-3 text-sm text-ink">
-                  Draft saved. Add at least one photo and it&apos;s ready to publish.
+                  Listed and live — buyers can see it now.{" "}
+                  <Link href={`/listing/${listing.slug}`} className="text-gold-dim underline">
+                    View it in the shop
+                  </Link>
+                  .
+                </p>
+              )}
+
+              {justCreated && !justPublished && (
+                <p className="mt-5 rounded-xl border border-gold/30 bg-gold/10 px-4 py-3 text-sm text-ink">
+                  Saved as a draft. Add at least one photo and it&apos;s ready to
+                  publish.
+                </p>
+              )}
+
+              {failedUploads > 0 && (
+                <p className="mt-5 rounded-xl border border-clay/30 bg-clay/10 px-4 py-3 text-sm text-clay">
+                  {failedUploads} photo{failedUploads === 1 ? "" : "s"} didn&apos;t
+                  upload. The listing was saved — you can add them again below.
                 </p>
               )}
 

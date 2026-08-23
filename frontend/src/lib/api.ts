@@ -4,6 +4,8 @@ export type User = {
   email: string;
   isSeller: boolean;
   emailVerified: boolean;
+  /** Public URL of the stored avatar, or null to fall back to initials. */
+  avatarUrl: string | null;
   createdAt: string;
 };
 
@@ -22,7 +24,12 @@ export class ApiError extends Error {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options.headers },
+    // FormData sets its own multipart Content-Type with a boundary; overriding
+    // it would make the body unparseable.
+    headers:
+      options.body instanceof FormData
+        ? options.headers
+        : { "Content-Type": "application/json", ...options.headers },
   });
 
   if (res.status === 204) {
@@ -76,4 +83,14 @@ export function resendVerification(email: string) {
 
 export function becomeSeller() {
   return request<{ user: User }>("/auth/become-seller", { method: "POST" });
+}
+
+export function uploadAvatar(file: File) {
+  const form = new FormData();
+  form.append("avatar", file);
+  return request<{ user: User }>("/profile/avatar", { method: "POST", body: form });
+}
+
+export function removeAvatar() {
+  return request<{ user: User }>("/profile/avatar", { method: "DELETE" });
 }

@@ -133,6 +133,40 @@ Sets `isSeller` and creates the `SellerProfile` in one transaction. Idempotent.
 
 ---
 
+## Profile — `/profile` 🔒
+
+### `POST /profile/avatar`
+
+`multipart/form-data`, field name `avatar`. JPEG, PNG, or WebP; max 5 MB; 10
+uploads per user per hour.
+
+Validated by **magic bytes**, cropped to a 512×512 square, and re-encoded to
+WebP — which strips EXIF including GPS. The image is written to object storage
+and only its URL is stored on the user row
+([ADR 0011](adr/0011-avatars-in-object-storage.md)).
+
+Replacing an existing picture deletes the previous object, but only after the
+new URL is committed — so a failed write never leaves an account with no
+picture.
+
+`200` → `{ "user": { ..., "avatarUrl": "https://…/uploads/<key>.webp" } }`
+
+| Failure | Code |
+| --- | --- |
+| Not a real image | `INVALID_IMAGE` |
+| Over 5 MB / unreadable upload | `UPLOAD_FAILED` |
+| Nothing attached | `NO_FILE` |
+| Hourly cap hit | `RATE_LIMITED` |
+
+### `DELETE /profile/avatar`
+
+Clears `avatarUrl` and deletes the stored object. The UI falls back to generated
+initials.
+
+`200` → `{ "user": { ..., "avatarUrl": null } }`
+
+---
+
 ## Catalog — `/catalog` (public)
 
 Only listings with `status = ACTIVE` and `deletedAt IS NULL` are ever returned.
@@ -207,6 +241,50 @@ Adds `reviews` to the listing (newest 20) and a sibling `related` array (up to
 ```
 
 `404 NOT_FOUND` if the slug is unknown, unpublished, or soft-deleted.
+
+---
+
+## Reservations — `/reservations` 🔒
+
+A short-lived hold on stock, taken before checkout exists to convert it. This is
+where the oversell race is prevented: availability is decided inside a
+transaction holding `SELECT … FOR UPDATE` on the listing row, so two buyers can
+never both claim the same unique item.
+→ [ADR 0012](adr/0012-row-locking-for-reservations.md)
+
+### `GET /reservations`
+
+Your live holds, newest first, plus `holdMinutes` (currently 15).
+
+### `POST /reservations`
+
+```json
+{ "listingId": "<id>", "quantity": 1 }
+```
+
+`201` → `{ "reservation": { "id", "listingId", "quantity", "expiresAt", "remainingQuantity" } }`
+
+Stock is decremented and the listing flips to `RESERVED` once it reaches zero —
+distinct from `SOLD`, because no money has moved.
+
+| Failure | Code | Status |
+| --- | --- | --- |
+| Nothing left | `INSUFFICIENT_STOCK` | 409 |
+| Sold, draft, or removed | `UNAVAILABLE` | 409 |
+| You already hold it | `ALREADY_HELD` | 409 |
+| It's your own listing | `OWN_LISTING` | 400 |
+| Unknown listing | `NOT_FOUND` | 404 |
+
+**Losing a race is a 409, not a 500.** Contention is an expected outcome.
+
+### `DELETE /reservations/:id`
+
+Releases the hold and returns the stock, flipping the listing back to `ACTIVE`.
+`204`.
+
+Holds also expire on their own after 15 minutes, and expired stock is reclaimed
+lazily the next time someone tries to reserve that listing — so correctness
+doesn't depend on a background job.
 
 ---
 
