@@ -39,6 +39,24 @@ const IMAGES = {
   vintageBicycle: unsplash("1743087177786-c580de98fbd8"),
   brassLamp: unsplash("1551806406-553417833005"),
   stackOfBooks: unsplash("1755621019856-a22fe8db1292"),
+
+  // Every id below was checked to return HTTP 200 with an image content-type
+  // from images.unsplash.com. One candidate was dropped because it resolved to
+  // plus.unsplash.com — Unsplash+ is licensed separately and not ours to ship.
+  castIronSkillets: unsplash("1560131324-71022d71ee4f"),
+  ceramicPlates: unsplash("1577930143935-a9489e4f34ec"),
+  copperPots: unsplash("1716757025967-5548360464b4"),
+  brassTeapot: unsplash("1465385076216-9288f6f0584b"),
+  drinkingGlasses: unsplash("1551497406-3e4e11919f7a"),
+  campingTent: unsplash("1684487747385-442d674962f2"),
+  hikingBackpack: unsplash("1509762774605-f07235a08f1f"),
+  tennisRacket: unsplash("1711118882380-085ab7f04f92"),
+  vintageRadio: unsplash("1756622584764-94eaa382652e"),
+  rotaryPhone: unsplash("1525598912003-663126343e1f"),
+  cassettePlayer: unsplash("1611001716885-b3402558a62b"),
+  leatherBoots: unsplash("1616244916660-d135a013d1f8"),
+  denimJacket: unsplash("1602082805057-3c32f79817a1"),
+  acousticGuitar: unsplash("1616146649085-a11fb216f170"),
 };
 
 /**
@@ -83,6 +101,21 @@ const CATEGORIES = [
     title: "Bikes & Outdoors",
     description: "Frames with rust and stories. Made to be ridden, not displayed.",
     coverImage: IMAGES.vintageBicycle,
+  },
+  {
+    // Sixth category so the browse row fills evenly. Reuses the kintsugi plate
+    // photo rather than adding an unverified image — the same pattern the
+    // furniture cover already follows.
+    slug: "kitchen-tableware",
+    title: "Kitchen & Tableware",
+    description: "Plates, pots, and glassware that have already served a few dinners.",
+    coverImage: IMAGES.kintsugiPlate,
+  },
+  {
+    slug: "electronics",
+    title: "Electronics",
+    description: "Cameras, audio, and gadgets — tested and described as they actually are.",
+    coverImage: IMAGES.vintageCamera,
   },
 ];
 
@@ -295,7 +328,9 @@ const LISTINGS: SeedListing[] = [
     title: "Kodak vintage camera",
     description:
       "Shutter fires at all speeds. Light seals are original and will want replacing before serious use.",
-    categorySlug: "decor-curiosities",
+    // A working camera belongs under Electronics rather than Décor — it's
+    // equipment someone will actually shoot with, not a shelf object.
+    categorySlug: "electronics",
     condition: Condition.WELL_LOVED,
     conditionNote: "Well-loved",
     priceCents: 6800,
@@ -368,6 +403,297 @@ const LISTINGS: SeedListing[] = [
       { rating: 4, body: "Frame is straight and sound. Rust really is surface only." },
       { rating: 4, body: "Needed a full drivetrain service, exactly as stated. No surprises." },
       { rating: 3, body: "Honest listing, but budget for the tune-up on top." },
+    ],
+  },
+
+  // ---- Kitchen & Tableware -------------------------------------------------
+  {
+    slug: "cast-iron-skillets",
+    title: "Cast iron skillets, set of three",
+    description:
+      "Three sizes, all black and slick from decades of use. The largest has a hairline casting mark that has never spread.",
+    categorySlug: "kitchen-tableware",
+    condition: Condition.GOOD,
+    conditionNote: "Well seasoned",
+    priceCents: 3200,
+    originalPriceCents: null,
+    quantity: 3,
+    image: IMAGES.castIronSkillets,
+    daysAgo: 5,
+    featured: false,
+    reviews: [
+      { rating: 5, body: "Seasoning is genuinely good — nothing sticks." },
+      { rating: 5, body: "Heavier than a modern pan, which is the point." },
+      { rating: 4, body: "Casting mark is there but it cooks perfectly evenly." },
+    ],
+  },
+  {
+    slug: "stoneware-plate-set",
+    title: "Stack of assorted stoneware plates",
+    description:
+      "Hand-thrown and mismatched on purpose. A couple have glaze crazing on the underside where it does not show.",
+    categorySlug: "kitchen-tableware",
+    condition: Condition.GOOD,
+    conditionNote: "Minor crazing",
+    priceCents: 5400,
+    originalPriceCents: 7000,
+    quantity: 1,
+    image: IMAGES.ceramicPlates,
+    daysAgo: 7,
+    featured: true,
+    reviews: [
+      { rating: 5, body: "Lovely weight. The size variation is charming in person." },
+      { rating: 4, body: "Crazing is only on two and only underneath, as described." },
+      { rating: 5, body: "Survived the dishwasher fine despite my worrying." },
+      { rating: 5, body: "Better than anything new at this price." },
+    ],
+  },
+  {
+    slug: "copper-pan-set",
+    title: "Copper pots, three sizes",
+    description:
+      "Tin lining is worn thin in the smallest pan and should be re-tinned before heavy use. The other two are sound.",
+    categorySlug: "kitchen-tableware",
+    condition: Condition.NEEDS_REPAIR,
+    conditionNote: "Needs re-tinning",
+    priceCents: 8800,
+    originalPriceCents: 12000,
+    quantity: 1,
+    image: IMAGES.copperPots,
+    daysAgo: 13,
+    featured: false,
+    reviews: [
+      { rating: 4, body: "Two are ready to use. The small one needs the work they mention." },
+      { rating: 5, body: "Beautiful pieces. Heat response is completely different to steel." },
+      { rating: 3, body: "Re-tinning cost more than I expected — factor it in." },
+    ],
+  },
+  {
+    slug: "brass-teapot",
+    title: "Brass teapot with a dented lid",
+    description:
+      "Small dent in the lid and tarnish across the body. Pours cleanly and does not drip.",
+    categorySlug: "kitchen-tableware",
+    condition: Condition.WELL_LOVED,
+    conditionNote: "Dented lid",
+    priceCents: 2600,
+    originalPriceCents: null,
+    quantity: 1,
+    image: IMAGES.brassTeapot,
+    daysAgo: 19,
+    featured: false,
+    reviews: [
+      { rating: 4, body: "The dent is exactly as small as the photos suggest." },
+      { rating: 5, body: "Pours without dribbling, which is rarer than it should be." },
+    ],
+  },
+  {
+    slug: "drinking-glasses",
+    title: "Three heavy-based drinking glasses",
+    description:
+      "No chips, no cracks. One has a faint scratch across the base you only find by feel.",
+    categorySlug: "kitchen-tableware",
+    condition: Condition.LIKE_NEW,
+    conditionNote: "Like new",
+    priceCents: 4200,
+    originalPriceCents: null,
+    quantity: 3,
+    image: IMAGES.drinkingGlasses,
+    daysAgo: 24,
+    featured: false,
+    reviews: [
+      { rating: 5, body: "Genuinely unmarked apart from the scratch they mention." },
+      { rating: 5, body: "Heavy bases. They feel much more expensive than they were." },
+      { rating: 4, body: "Arrived well wrapped, all three intact." },
+    ],
+  },
+
+  // ---- Bikes & Outdoors ----------------------------------------------------
+  {
+    slug: "two-person-canvas-tent",
+    title: "Two-person canvas tent",
+    description:
+      "Canvas is sound and re-proofed last season. One guy line was replaced and does not match the others.",
+    categorySlug: "bikes-outdoors",
+    condition: Condition.GOOD,
+    conditionNote: "Re-proofed",
+    priceCents: 9500,
+    originalPriceCents: 13000,
+    quantity: 1,
+    image: IMAGES.campingTent,
+    daysAgo: 9,
+    featured: true,
+    reviews: [
+      { rating: 5, body: "Stayed completely dry through two nights of rain." },
+      { rating: 4, body: "Heavy compared to nylon, but far quieter in wind." },
+      { rating: 5, body: "Poles all present and straight." },
+    ],
+  },
+  {
+    slug: "hiking-rucksack-65l",
+    title: "65-litre hiking rucksack",
+    description:
+      "Straps and buckles all work. There is a repaired tear on the lid, stitched from the inside and visible up close.",
+    categorySlug: "bikes-outdoors",
+    condition: Condition.WELL_LOVED,
+    conditionNote: "Repaired lid",
+    priceCents: 5800,
+    originalPriceCents: null,
+    quantity: 1,
+    image: IMAGES.hikingBackpack,
+    daysAgo: 15,
+    featured: false,
+    reviews: [
+      { rating: 4, body: "Repair is neat and has held through a week of carrying." },
+      { rating: 5, body: "Frame is intact, which is the part that matters." },
+      { rating: 4, body: "Smells faintly of woodsmoke. I did not mind." },
+    ],
+  },
+  {
+    slug: "tennis-racket-restring",
+    title: "Tennis racket, needs restringing",
+    description:
+      "Strings are original and slack — fine for display, not for play. Frame and grip are both sound.",
+    categorySlug: "bikes-outdoors",
+    condition: Condition.NEEDS_REPAIR,
+    conditionNote: "Needs restringing",
+    priceCents: 3400,
+    originalPriceCents: null,
+    quantity: 1,
+    image: IMAGES.tennisRacket,
+    daysAgo: 26,
+    featured: false,
+    reviews: [
+      { rating: 5, body: "Bought it to hang on a wall and it is perfect for that." },
+      { rating: 4, body: "Slack strings as stated. Frame is completely solid." },
+    ],
+  },
+
+  // ---- Electronics --------------------------------------------------------
+  {
+    slug: "bakelite-valve-radio",
+    title: "Bakelite valve radio",
+    description:
+      "Powers on and tunes AM. It hums for the first minute until the valves warm. Cable has been replaced for safety.",
+    categorySlug: "electronics",
+    condition: Condition.GOOD,
+    conditionNote: "Working, hums when cold",
+    priceCents: 7400,
+    originalPriceCents: 9000,
+    quantity: 1,
+    image: IMAGES.vintageRadio,
+    daysAgo: 11,
+    featured: true,
+    reviews: [
+      { rating: 5, body: "Rewired properly, which is the thing to check on these." },
+      { rating: 4, body: "The warm-up hum is real but it settles as described." },
+      { rating: 5, body: "Case has no cracks, which is rare for bakelite." },
+      { rating: 4, body: "AM only, so mostly a beautiful object now." },
+    ],
+  },
+  {
+    slug: "rotary-dial-telephone",
+    title: "Rotary dial telephone",
+    description:
+      "Dial spins true and the bell still rings. Needs an adapter for a modern socket, which is not included.",
+    categorySlug: "electronics",
+    condition: Condition.GOOD,
+    conditionNote: "Adapter not included",
+    priceCents: 4800,
+    originalPriceCents: null,
+    quantity: 1,
+    image: IMAGES.rotaryPhone,
+    daysAgo: 17,
+    featured: false,
+    reviews: [
+      { rating: 5, body: "The bell is astonishingly loud. Worth it for that alone." },
+      { rating: 4, body: "Had to buy the adapter separately, as they say up front." },
+      { rating: 5, body: "Cord is not tangled or perished." },
+    ],
+  },
+  {
+    slug: "personal-cassette-player",
+    title: "Personal cassette player",
+    description:
+      "Plays and rewinds. The belt was replaced so speed is steady. Battery door needs tape to stay shut.",
+    categorySlug: "electronics",
+    condition: Condition.WELL_LOVED,
+    conditionNote: "Battery door loose",
+    priceCents: 3600,
+    originalPriceCents: 4800,
+    quantity: 1,
+    image: IMAGES.cassettePlayer,
+    daysAgo: 21,
+    featured: false,
+    reviews: [
+      { rating: 4, body: "New belt makes a real difference — no wobble at all." },
+      { rating: 3, body: "The door really does need tape. Minor but daily." },
+      { rating: 5, body: "Sounds better through headphones than I remembered." },
+    ],
+  },
+
+  // ---- Clothing & Accessories ---------------------------------------------
+  {
+    slug: "brown-leather-work-boots",
+    title: "Brown leather work boots",
+    description:
+      "Resoled once already. Uppers are excellent, creased across the toe where they flex. Laces are new.",
+    categorySlug: "clothing-accessories",
+    condition: Condition.GOOD,
+    conditionNote: "Resoled once",
+    priceCents: 8600,
+    originalPriceCents: 11000,
+    quantity: 1,
+    image: IMAGES.leatherBoots,
+    daysAgo: 6,
+    featured: false,
+    reviews: [
+      { rating: 5, body: "Resole was done well. Plenty of life left in them." },
+      { rating: 4, body: "Creasing is as pictured. Leather feels fed and healthy." },
+      { rating: 5, body: "True to size with a thick sock." },
+    ],
+  },
+  {
+    slug: "faded-denim-jacket",
+    title: "Faded denim jacket",
+    description:
+      "Faded honestly rather than distressed on purpose. One button was replaced and is a slightly different brass.",
+    categorySlug: "clothing-accessories",
+    condition: Condition.GOOD,
+    conditionNote: "One replaced button",
+    priceCents: 5200,
+    originalPriceCents: null,
+    quantity: 1,
+    image: IMAGES.denimJacket,
+    daysAgo: 12,
+    featured: false,
+    reviews: [
+      { rating: 5, body: "The fade is the real thing. You cannot fake this." },
+      { rating: 4, body: "Odd button is noticeable if you look. I do not." },
+      { rating: 5, body: "Fits exactly as the measurements said." },
+    ],
+  },
+
+  // ---- Music, Film & Books ------------------------------------------------
+  {
+    slug: "acoustic-guitar-repaired",
+    title: "Acoustic guitar with a repaired crack",
+    description:
+      "A cleat-repaired crack runs below the bridge. It has been stable for years and the guitar holds tune well.",
+    categorySlug: "music-film-books",
+    condition: Condition.WELL_LOVED,
+    conditionNote: "Repaired crack",
+    priceCents: 12500,
+    originalPriceCents: 16000,
+    quantity: 1,
+    image: IMAGES.acousticGuitar,
+    daysAgo: 4,
+    featured: true,
+    reviews: [
+      { rating: 5, body: "Repair is solid and honestly disclosed. Sounds warm." },
+      { rating: 4, body: "Action needed a small adjustment, nothing unexpected." },
+      { rating: 5, body: "Holds tune better than my newer one." },
+      { rating: 4, body: "The crack is visible but clearly stable." },
     ],
   },
 ];

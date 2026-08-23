@@ -1,33 +1,72 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fdf6f0;
-  --foreground: #453734;
+  --background: #ffffff;
+  --foreground: #000000;
 }
 
+/*
+ * Palette follows the "Exclusive" e-commerce reference: black text on white,
+ * a single red accent, and a light grey for product tiles.
+ *
+ * The existing semantic token names are kept and remapped rather than renamed.
+ * Every component already speaks in ink / paper / gold / line, so redefining
+ * the values here reskins the whole app without touching those files.
+ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-nunito);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
-  --font-serif: var(--font-quicksand);
+  --font-serif: var(--font-poppins);
 
-  --color-paper: #fdf6f0;
+  /* Surfaces */
+  --color-paper: #ffffff;
   --color-paper-card: #ffffff;
-  --color-ink: #453734;
-  --color-ink-dim: #756456;
-  --color-line: #f0dfd6;
-  --color-gold: #d9694c;
-  --color-gold-bright: #e8917a;
-  --color-gold-dim: #a8492f;
-  --color-sage: #94bb90;
-  --color-sage-dim: #4c6b46;
-  --color-star: #f6c667;
+  --color-line: #e5e5e5;
 
-  --color-blush: #fbe6dd;
-  --color-sand: #f5e6d3;
-  --color-lavender-tint: #eee6f7;
-  --color-butter: #fbf0d8;
+  /* Text. ink-dim is #5f6368 rather than the reference's #7d8184, which only
+     reaches 3.9:1 on white and fails AA for body copy. */
+  --color-ink: #000000;
+  --color-ink-dim: #5f6368;
+
+  /* Accent red, split in two on purpose.
+     `gold`     #db4444 — the reference red. 4.27:1 on white, so fills, badges
+                and large type only, never small text.
+     `gold-dim` #c93131 — 5.29:1 on white and 5.29:1 behind white text, so it
+                carries prices, links, and button labels while reading as the
+                same red. */
+  --color-gold: #db4444;
+  --color-gold-dim: #c93131;
+  --color-gold-bright: #e87171;
+
+  /* Product tiles and section fills. All four names collapse onto the
+     reference's single grey — the old warm tints have no equivalent here. */
+  --color-blush: #f5f5f5;
+  --color-sand: #f5f5f5;
+  --color-butter: #f5f5f5;
+  --color-lavender-tint: #f5f5f5;
+
+  /* The reference's lime green, used for "NEW" badges and the promo CTA.
+     `sage` is the fill; `sage-dim` is the AA-safe version for text. */
+  --color-sage: #00ff66;
+  --color-sage-dim: #00803a;
+
+  --color-star: #ffad33;
+
+  /* Errors. Deeper than the accent so a validation message doesn't read as a
+     call to action. 7.4:1 on white. */
+  --color-clay: #9e1c1c;
+
+  /* The reference is a sharp design — 4px corners throughout. Overriding the
+     scale here squares off every rounded-xl/2xl/3xl in the codebase at once.
+     `rounded-full` is deliberately untouched: avatars still need to be circles. */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-2xl: 4px;
+  --radius-3xl: 4px;
 }
 
 body {
@@ -36,15 +75,21 @@ body {
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
 
-.text-gradient-gold {
-  background-image: linear-gradient(100deg, var(--color-gold-dim), var(--color-gold) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+/* Headings in the reference are tight, heavy Inter/Poppins rather than the
+   airy serif this project started with. */
+.font-serif {
+  letter-spacing: -0.01em;
 }
 
+/* Kept for the wordmark. Now a flat accent rather than a gradient, matching the
+   reference's solid-colour logo treatment. */
+.text-gradient-gold {
+  color: var(--color-gold-dim);
+}
+
+/* The reference has no glow treatment; a plain drop shadow reads correctly. */
 .seam-glow {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-gold) 25%, transparent), 0 8px 24px -8px color-mix(in srgb, var(--color-gold) 40%, transparent);
+  box-shadow: 0 6px 16px -8px rgb(0 0 0 / 0.35);
 }
 
 @keyframes field-error-shake {
@@ -57,4 +102,21 @@ body {
 
 .animate-field-shake {
   animation: field-error-shake 0.4s ease-in-out;
+}
+
+/* Section eyebrow: the small red bar + red label above every section title. */
+.section-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-gold-dim);
+}
+.section-eyebrow::before {
+  content: "";
+  width: 20px;
+  height: 40px;
+  border-radius: 4px;
+  background: var(--color-gold);
 }

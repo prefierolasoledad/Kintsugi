@@ -128,7 +128,7 @@ export default function EditListingPage() {
     <>
       <Nav />
       <main className="flex-1 px-6 py-12">
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-5xl">
           <Link
             href="/seller"
             className="text-sm text-ink-dim transition hover:text-gold-dim"

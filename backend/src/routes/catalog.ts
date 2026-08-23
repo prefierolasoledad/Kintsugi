@@ -26,6 +26,7 @@ type ListingRow = {
   slug: string;
   title: string;
   description: string;
+  status: string;
   condition: string;
   conditionNote: string | null;
   priceCents: number;
@@ -81,6 +82,9 @@ function serializeListing(row: ListingRow, rating: RatingAgg) {
     originalPriceCents: row.originalPriceCents,
     currency: row.currency,
     quantity: row.quantity,
+    // Exposed so a detail page can say "on hold" or "sold" instead of
+    // pretending an unavailable item is buyable.
+    status: row.status,
     featured: row.featured,
     createdAt: row.createdAt.toISOString(),
     category: row.category,
@@ -219,8 +223,18 @@ catalogRouter.get("/listings", async (req, res) => {
 
 catalogRouter.get("/listings/:slug", async (req, res) => {
   try {
+    // Detail pages stay reachable once an item is held or sold — a buyer who
+    // holds the last one must still be able to open its page, and a public URL
+    // that 404s the moment stock runs out is a broken link. Lists and search
+    // continue to show only ACTIVE.
     const row = await prisma.listing.findFirst({
-      where: { slug: req.params.slug, ...VISIBLE },
+      where: {
+        slug: req.params.slug,
+        deletedAt: null,
+        status: {
+          in: [ListingStatus.ACTIVE, ListingStatus.RESERVED, ListingStatus.SOLD],
+        },
+      },
       include: {
         ...listingInclude,
         reviews: {

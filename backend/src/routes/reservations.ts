@@ -24,6 +24,9 @@ reservationsRouter.get("/", async (req, res) => {
     res.json({
       reservations: reservations.map((r) => ({
         id: r.id,
+        // The client needs this to tell whether the listing it's showing is one
+        // the viewer already holds.
+        listingId: r.listingId,
         quantity: r.quantity,
         expiresAt: r.expiresAt.toISOString(),
         createdAt: r.createdAt.toISOString(),

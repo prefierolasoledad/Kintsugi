@@ -77,10 +77,11 @@ export default function PhotoPicker({
 
   return (
     <div>
-      <label className="text-sm font-medium text-ink">Photos</label>
-      <p className="mt-0.5 text-xs text-ink-dim">
-        First photo is the cover. Up to {MAX_PHOTOS}, JPEG/PNG/WebP, max 8MB each.
-        Location data is stripped from every upload.
+      {/* No heading here: this always sits inside a titled form section, and
+          two "Photos" labels in a row is noise. */}
+      <p className="text-xs text-ink-dim">
+        Up to {MAX_PHOTOS} · JPEG, PNG, or WebP · max 8MB each · location data is
+        stripped from every upload
       </p>
 
       {files.length > 0 && (

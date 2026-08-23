@@ -274,6 +274,7 @@ export async function listMyReservations(userId: string) {
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
+      listingId: true,
       quantity: true,
       expiresAt: true,
       createdAt: true,

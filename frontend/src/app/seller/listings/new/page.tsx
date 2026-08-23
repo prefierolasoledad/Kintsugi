@@ -79,7 +79,7 @@ export default function NewListingPage() {
     <>
       <Nav />
       <main className="flex-1 px-6 py-12">
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-5xl">
           <Link
             href="/seller"
             className="text-sm text-ink-dim transition hover:text-gold-dim"
@@ -87,14 +87,19 @@ export default function NewListingPage() {
             ← Your listings
           </Link>
 
-          <h1 className="mt-4 font-serif text-3xl font-medium tracking-tight text-ink sm:text-4xl">
-            List an item
-          </h1>
-          <p className="mt-3 text-sm text-ink-dim">
-            Add photos and the details, and it goes live as soon as you save. Say
-            what&apos;s wrong with it as well as what&apos;s right — buyers here expect
-            that.
-          </p>
+          <div className="mt-4 overflow-hidden rounded-3xl border border-line bg-linear-to-br from-blush via-paper-card to-butter p-8">
+            <span className="inline-block rounded-full border border-gold/30 bg-paper/70 px-3 py-1 text-xs font-medium text-gold-dim">
+              Four steps, about two minutes
+            </span>
+            <h1 className="mt-4 font-serif text-3xl font-medium tracking-tight text-ink sm:text-4xl">
+              List an item
+            </h1>
+            <p className="mt-3 max-w-xl text-sm text-ink-dim">
+              It goes live the moment you save. The preview on the right shows
+              exactly what a buyer will see — including the discount badge, if you
+              set a &ldquo;was&rdquo; price.
+            </p>
+          </div>
 
           <ListingForm
             submitLabel="Publish listing"

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import Footer from "@/components/Footer";
 import ListingCard from "@/components/ListingCard";
 import Nav from "@/components/Nav";
+import ReserveButton from "@/components/ReserveButton";
 import StarRating from "@/components/StarRating";
 import { discountPercent, formatPrice, getListing } from "@/lib/catalog";
 
@@ -113,9 +114,13 @@ export default async function ListingPage({
                 <div>
                   <dt className="text-ink-dim">Availability</dt>
                   <dd className="mt-1 font-medium text-ink">
-                    {listing.quantity === 1
-                      ? "Only 1 available"
-                      : `${listing.quantity} available`}
+                    {listing.status === "SOLD"
+                      ? "Sold"
+                      : listing.quantity === 0
+                        ? "On hold"
+                        : listing.quantity === 1
+                          ? "Only 1 available"
+                          : `${listing.quantity} available`}
                   </dd>
                 </div>
                 <div>
@@ -137,18 +142,11 @@ export default async function ListingPage({
                 </div>
               </dl>
 
-              <div className="mt-8 rounded-2xl border border-line bg-blush/40 p-5">
-                <div className="flex items-baseline justify-between">
-                  <p className="text-sm font-medium text-ink">Buying isn&apos;t live yet</p>
-                  <span className="rounded-full border border-gold/30 px-2.5 py-1 text-xs font-medium text-gold-dim">
-                    Planned
-                  </span>
-                </div>
-                <p className="mt-2 text-sm text-ink-dim">
-                  Cart and checkout aren&apos;t built yet, so there&apos;s no button here
-                  that would pretend to work.
-                </p>
-              </div>
+              <ReserveButton
+                listingId={listing.id}
+                status={listing.status}
+                quantity={listing.quantity}
+              />
             </div>
           </div>
 

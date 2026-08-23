@@ -27,6 +27,7 @@ export type CatalogListing = {
   originalPriceCents: number | null;
   currency: string;
   quantity: number;
+  status: string;
   featured: boolean;
   createdAt: string;
   category: { slug: string; title: string };
