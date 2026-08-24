@@ -106,6 +106,61 @@ profileRouter.post("/avatar", singleAvatar, async (req, res) => {
   }
 });
 
+/**
+ * Reviews the caller has written. Real data — the Review table is authored by
+ * users — so an account that hasn't reviewed anything gets an honest empty list
+ * rather than a placeholder screen.
+ */
+profileRouter.get("/reviews", async (req, res) => {
+  try {
+    const reviews = await prisma.review.findMany({
+      where: { authorId: req.userId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        rating: true,
+        body: true,
+        createdAt: true,
+        updatedAt: true,
+        listing: {
+          select: {
+            slug: true,
+            title: true,
+            priceCents: true,
+            currency: true,
+            status: true,
+            deletedAt: true,
+            images: { orderBy: { position: "asc" }, take: 1, select: { url: true } },
+          },
+        },
+      },
+    });
+
+    res.json({
+      reviews: reviews.map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        body: r.body,
+        createdAt: r.createdAt.toISOString(),
+        edited: r.updatedAt.getTime() - r.createdAt.getTime() > 1000,
+        listing: {
+          slug: r.listing.slug,
+          title: r.listing.title,
+          priceCents: r.listing.priceCents,
+          currency: r.listing.currency,
+          image: r.listing.images[0]?.url ?? null,
+          // A review can outlive the listing it was written about.
+          available: r.listing.deletedAt === null && r.listing.status !== "REMOVED",
+        },
+      })),
+    });
+  } catch (err) {
+    console.error("GET /profile/reviews failed", err);
+    res.status(500).json({ error: "Could not load your reviews." });
+  }
+});
+
 profileRouter.delete("/avatar", async (req, res) => {
   try {
     const existing = await prisma.user.findUnique({

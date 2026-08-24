@@ -4,6 +4,7 @@ const COLUMNS = [
   {
     title: "Support",
     lines: [
+      { label: "About Kintsugi", href: "/about" },
       { label: "Contact us", href: "/help/contact" },
       { label: "Trust & safety", href: "/help/trust-safety" },
       { label: "Shipping", href: "/help/shipping" },

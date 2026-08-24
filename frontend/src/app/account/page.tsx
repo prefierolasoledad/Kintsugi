@@ -9,12 +9,14 @@ import AvatarUploader from "@/components/AvatarUploader";
 import {
   AddressIcon,
   BellIcon,
+  CancelIcon,
   CardIcon,
   CartIcon,
   HeartIcon,
   LockIcon,
   OrdersIcon,
   ShieldIcon,
+  StarIcon,
   TagIcon,
   WalletIcon,
 } from "@/components/AccountIcons";
@@ -164,8 +166,22 @@ export default function AccountPage() {
             <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               <AccountCard
                 icon={<OrdersIcon />}
-                title="Orders"
+                title="My orders"
                 description="Track purchases and view past orders."
+                href="/account/orders"
+                badge={<PlannedBadge />}
+              />
+              <AccountCard
+                icon={<StarIcon />}
+                title="My reviews"
+                description="Reviews you've written, and what buyers see."
+                href="/account/reviews"
+              />
+              <AccountCard
+                icon={<CancelIcon />}
+                title="My cancellations"
+                description="Cancelled orders and refunds owed."
+                href="/account/cancellations"
                 badge={<PlannedBadge />}
               />
               <AccountCard

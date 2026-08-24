@@ -74,6 +74,41 @@ export const BellIcon = () => (
   </svg>
 );
 
+export const StarIcon = () => (
+  <svg {...props}>
+    <path d="M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.1-5.4 3.1 1.3-6L3.3 9.2l6.1-.6z" />
+  </svg>
+);
+
+export const CancelIcon = () => (
+  <svg {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9 9l6 6M15 9l-6 6" />
+  </svg>
+);
+
+export const UserIcon = () => (
+  <svg {...props}>
+    <circle cx="12" cy="8" r="3.5" />
+    <path d="M5 20a7 7 0 0114 0" />
+  </svg>
+);
+
+export const StoreIcon = () => (
+  <svg {...props}>
+    <path d="M4 9h16v11H4z" />
+    <path d="M4 9l2-5h12l2 5" />
+    <path d="M9 20v-6h6v6" />
+  </svg>
+);
+
+export const LogoutIcon = () => (
+  <svg {...props}>
+    <path d="M15 4h3a2 2 0 012 2v12a2 2 0 01-2 2h-3" />
+    <path d="M10 8l-4 4 4 4M6 12h9" />
+  </svg>
+);
+
 export const WalletIcon = () => (
   <svg {...props}>
     <path d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />

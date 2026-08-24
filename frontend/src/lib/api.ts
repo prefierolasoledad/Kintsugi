@@ -85,6 +85,26 @@ export function becomeSeller() {
   return request<{ user: User }>("/auth/become-seller", { method: "POST" });
 }
 
+export type MyReview = {
+  id: string;
+  rating: number;
+  body: string | null;
+  createdAt: string;
+  edited: boolean;
+  listing: {
+    slug: string;
+    title: string;
+    priceCents: number;
+    currency: string;
+    image: string | null;
+    available: boolean;
+  };
+};
+
+export function getMyReviews() {
+  return request<{ reviews: MyReview[] }>("/profile/reviews");
+}
+
 export function uploadAvatar(file: File) {
   const form = new FormData();
   form.append("avatar", file);

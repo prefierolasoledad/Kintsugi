@@ -5,14 +5,13 @@ import { useState } from "react";
 import Avatar from "@/components/Avatar";
 import NotificationBell from "@/components/NotificationBell";
 import SearchWithFilters from "@/components/SearchWithFilters";
-import TopBar from "@/components/TopBar";
 import UserMenu from "@/components/UserMenu";
 import { useAuth } from "@/lib/AuthContext";
 
 const LINKS = [
   { key: "home", href: "/", label: "Home" },
   { key: "shop", href: "/search", label: "Shop" },
-  { key: "about", href: "/#philosophy", label: "About" },
+  { key: "about", href: "/about", label: "About" },
   { key: "contact", href: "/help/contact", label: "Contact" },
 ];
 
@@ -27,8 +26,6 @@ export default function Nav() {
 
   return (
     <header className="sticky top-0 z-50 bg-paper">
-      <TopBar />
-
       <div className="border-b border-line">
         {/* Both outer zones are flex-1 so they share the leftover width equally,
             which keeps the link row dead-centre even though the right-hand side
