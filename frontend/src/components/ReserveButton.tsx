@@ -134,8 +134,8 @@ export default function ReserveButton({
           </p>
         </div>
         <p className="mt-2 text-sm text-ink-dim">
-          It&apos;s off the shop while you decide. Checkout isn&apos;t built yet, so
-          the hold will simply expire and put it back.
+          It&apos;s off the shop while you decide. If the hold runs out it goes
+          straight back — so check out before then if you want it.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Link
@@ -184,13 +184,10 @@ export default function ReserveButton({
         <p className="text-sm font-medium text-ink">
           {quantity === 1 ? "Only one of these" : `${quantity} available`}
         </p>
-        <span className="rounded-full border border-gold/30 px-2.5 py-1 text-xs font-medium text-gold-dim">
-          Checkout planned
-        </span>
       </div>
       <p className="mt-2 text-sm text-ink-dim">
-        Hold it for 15 minutes and nobody else can take it meanwhile. Paying
-        isn&apos;t built yet, so a hold is as far as this goes today.
+        Hold it for 15 minutes and nobody else can take it meanwhile. That&apos;s
+        long enough to check out — the hold stays until you&apos;ve paid.
       </p>
       <button
         type="button"

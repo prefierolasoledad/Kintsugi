@@ -33,7 +33,7 @@ import { ListingStatus, ReservationStatus } from "../generated/prisma/enums";
 export const RESERVATION_TTL_MS = 15 * 60 * 1000;
 
 /** Guards against a transaction sitting on a lock forever under contention. */
-const TX_OPTIONS = { timeout: 10_000, maxWait: 10_000 };
+export const TX_OPTIONS = { timeout: 10_000, maxWait: 10_000 };
 
 export class ReservationError extends Error {
   code: string;
@@ -47,7 +47,7 @@ export class ReservationError extends Error {
   }
 }
 
-type LockedListing = {
+export type LockedListing = {
   id: string;
   quantity: number;
   status: string;
@@ -62,7 +62,7 @@ type LockedListing = {
  * them — this is not string concatenation. Raw SQL is used only because the
  * query builder cannot express FOR UPDATE.
  */
-async function lockListing(
+export async function lockListing(
   tx: Pick<typeof prisma, "$queryRaw">,
   listingId: string
 ): Promise<LockedListing | null> {
@@ -78,10 +78,10 @@ async function lockListing(
 /**
  * Returns stock from holds that have timed out.
  *
- * Called while the listing row is locked, so expiry is reclaimed lazily on the
- * next attempt rather than depending on a background job. A sweeper is still
- * worth adding for stock that would otherwise sit idle, but correctness does
- * not rely on one.
+ * Called while the listing row is locked, so a reservation attempt always sees
+ * up-to-date availability. This is NOT sufficient on its own: a fully-held
+ * listing is hidden from the catalog, so nobody can trigger this path for it.
+ * releaseExpiredHolds() below is what actually recovers that stock.
  */
 async function reclaimExpired(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
@@ -289,4 +289,95 @@ export async function listMyReservations(userId: string) {
       },
     },
   });
+}
+
+/**
+ * Releases every hold that has passed its expiry, returning the stock.
+ *
+ * WHY THIS HAS TO EXIST
+ * Reclaim also happens lazily inside reserveListing, and ADR 0012 originally
+ * called this sweeper "an optimisation, not a fix". That was wrong, and it
+ * deadlocked in practice:
+ *
+ *   1. the last unit of a listing is held, so status flips to RESERVED
+ *   2. RESERVED listings are excluded from the catalog
+ *   3. the hold expires — but nobody can attempt to reserve a listing they
+ *      cannot see, so the lazy reclaim inside reserveListing never runs
+ *   4. the listing stays invisible forever
+ *
+ * Availability that can only be restored by someone requesting the very thing
+ * that is hidden is not recoverable. It needs an external trigger.
+ *
+ * Locks each listing row before adjusting stock, in the same order as every
+ * other path here, so it cannot deadlock against a live reservation.
+ */
+export async function releaseExpiredHolds(): Promise<number> {
+  const now = new Date();
+
+  const expired = await prisma.reservation.findMany({
+    where: { status: ReservationStatus.HELD, expiresAt: { lte: now } },
+    select: { id: true, listingId: true, quantity: true },
+  });
+
+  let released = 0;
+
+  for (const hold of expired) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const listing = await lockListing(tx, hold.listingId);
+        if (!listing) return;
+
+        // Re-read under the lock: a concurrent reserveListing may have already
+        // reclaimed this one between the query above and the lock.
+        const still = await tx.reservation.findFirst({
+          where: { id: hold.id, status: ReservationStatus.HELD },
+          select: { id: true, quantity: true },
+        });
+        if (!still) return;
+
+        await tx.reservation.update({
+          where: { id: still.id },
+          data: { status: ReservationStatus.EXPIRED, releasedAt: now },
+        });
+
+        const restored = listing.quantity + still.quantity;
+        await tx.listing.update({
+          where: { id: hold.listingId },
+          data: {
+            quantity: restored,
+            // Back on sale unless it sold in the meantime.
+            status:
+              listing.status === ListingStatus.SOLD
+                ? ListingStatus.SOLD
+                : ListingStatus.ACTIVE,
+          },
+        });
+
+        released++;
+      }, TX_OPTIONS);
+    } catch (err) {
+      // One stuck listing must not stop the rest of the sweep.
+      console.error(`Failed to release expired hold ${hold.id}`, err);
+    }
+  }
+
+  return released;
+}
+
+/** Runs the sweep on an interval. Returns a stop function. */
+export function startReservationSweeper(intervalMs = 60_000) {
+  async function tick() {
+    try {
+      const n = await releaseExpiredHolds();
+      if (n > 0) console.log(`Reservation sweeper released ${n} expired hold(s)`);
+    } catch (err) {
+      console.error("Reservation sweeper failed", err);
+    }
+  }
+
+  void tick();
+  const timer = setInterval(tick, intervalMs);
+  // Don't hold the process open on shutdown.
+  timer.unref?.();
+  return () => clearInterval(timer);
 }

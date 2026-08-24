@@ -246,8 +246,9 @@ export default function VerifyPage() {
                     </span>
                   </div>
                   <p className="mt-2 text-sm text-ink-dim">
-                    Nothing to pay out — checkout isn&apos;t built yet, so no money has
-                    moved.
+                    Nothing to pay out. Payments run against a sandbox, so no real
+                    money has ever moved — and there&apos;s no payout pipeline yet
+                    to move it with.
                   </p>
                 </div>
               )}

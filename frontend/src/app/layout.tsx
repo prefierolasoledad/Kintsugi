@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono, Inter, Poppins } from "next/font/google";
 import SamePageLinkScroll from "@/components/SamePageLinkScroll";
 import { AuthProvider } from "@/lib/AuthContext";
+import { WishlistProvider } from "@/lib/WishlistContext";
 import "./globals.css";
 
 // Inter for UI and body, Poppins for headings — the type pairing the reference
@@ -36,8 +37,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <AuthProvider>
-          <SamePageLinkScroll />
-          {children}
+          {/* Inside AuthProvider: the wishlist belongs to a signed-in user, so
+              it has to be able to read who that is. */}
+          <WishlistProvider>
+            <SamePageLinkScroll />
+            {children}
+          </WishlistProvider>
         </AuthProvider>
       </body>
     </html>

@@ -276,11 +276,13 @@ sellerVerificationRouter.get("/payouts", async (req, res) => {
     res.json({
       payouts: {
         enabled: true,
-        // Honest empty state: checkout doesn't exist, so there is nothing to pay out.
+        // Honest empty state. Checkout exists now, but it runs against a payment
+        // sandbox and there is no payout pipeline, so the balance is genuinely
+        // zero rather than unimplemented-and-hidden.
         balanceCents: 0,
         currency: "USD",
         history: [],
-        note: "Checkout isn't built yet, so there's nothing to pay out.",
+        note: "Payments are sandbox only and payouts aren't built, so there's nothing to pay out.",
       },
     });
   } catch (err) {

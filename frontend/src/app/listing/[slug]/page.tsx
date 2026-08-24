@@ -6,6 +6,7 @@ import ListingCard from "@/components/ListingCard";
 import Nav from "@/components/Nav";
 import ReserveButton from "@/components/ReserveButton";
 import StarRating from "@/components/StarRating";
+import WishlistButton from "@/components/WishlistButton";
 import { discountPercent, formatPrice, getListing } from "@/lib/catalog";
 
 function formatDate(iso: string) {
@@ -146,6 +147,16 @@ export default async function ListingPage({
                 listingId={listing.id}
                 status={listing.status}
                 quantity={listing.quantity}
+              />
+
+              {/* Saving stays available even when the item can't be held —
+                  something sold or reserved is exactly what a buyer wants to
+                  keep an eye on. */}
+              <WishlistButton
+                listingId={listing.id}
+                title={listing.title}
+                variant="full"
+                className="mt-3"
               />
             </div>
           </div>

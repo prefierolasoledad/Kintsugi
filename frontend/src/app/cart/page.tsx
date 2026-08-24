@@ -10,6 +10,7 @@ import Nav from "@/components/Nav";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import { formatPrice } from "@/lib/catalog";
+import { getMyOrders, isOpen, startCheckout, type Order } from "@/lib/ordersApi";
 import {
   getMyHolds,
   releaseHold,
@@ -23,7 +24,18 @@ export default function CartPage() {
   const [holds, setHolds] = useState<HeldReservation[] | null>(null);
   const [holdMinutes, setHoldMinutes] = useState(15);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [checkingOut, setCheckingOut] = useState(false);
+  /**
+   * An order already awaiting payment.
+   *
+   * Checking out converts the holds, so the cart legitimately empties. Without
+   * surfacing the order here, a buyer who closed the tab mid-payment would
+   * come back to an empty cart and no sign of the items they still have
+   * reserved — which reads as "my things vanished".
+   */
+  const [openOrder, setOpenOrder] = useState<Order | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
@@ -38,11 +50,45 @@ export default function CartPage() {
       setError(err instanceof ApiError ? err.message : "Couldn't load your cart.");
       setHolds([]);
     }
+
+    try {
+      const { orders } = await getMyOrders();
+      setOpenOrder(orders.find(isOpen) ?? null);
+    } catch {
+      // Non-essential to the cart itself; a failure here must not blank it.
+    }
   }, []);
 
   useEffect(() => {
     if (user) load();
   }, [user, load]);
+
+  // Read from location rather than useSearchParams so this page needs no
+  // Suspense boundary for a one-off confirmation message.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("cancelled")) {
+      setNotice("That order was cancelled. Your items are back in the shop.");
+      window.history.replaceState({}, "", "/cart");
+    }
+  }, []);
+
+  async function checkout() {
+    setError(null);
+    setCheckingOut(true);
+    try {
+      const { order } = await startCheckout();
+      router.push(`/checkout/${order.id}`);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't start checkout. Please try again."
+      );
+      // A hold may have expired out from under them, so re-read the truth.
+      await load();
+      setCheckingOut(false);
+    }
+  }
 
   async function release(id: string) {
     setError(null);
@@ -98,10 +144,41 @@ export default function CartPage() {
             one-of-a-kind, so the hold is the part that actually matters.
           </p>
 
+          {notice && (
+            <p className="mt-6 rounded-xl border border-line bg-blush px-4 py-3 text-sm text-ink">
+              {notice}
+            </p>
+          )}
+
           {error && (
             <p className="mt-6 rounded-xl border border-clay/30 bg-clay/10 px-4 py-3 text-sm text-clay">
               {error}
             </p>
+          )}
+
+          {openOrder && (
+            <div className="mt-6 rounded-2xl border border-gold/30 bg-gold/5 p-5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-sm font-medium text-ink">
+                  You have an order waiting to be paid
+                </p>
+                <span className="text-sm text-ink-dim">{openOrder.reference}</span>
+              </div>
+              <p className="mt-2 text-sm text-ink-dim">
+                {openOrder.items.length} item
+                {openOrder.items.length === 1 ? "" : "s"} ·{" "}
+                {formatPrice(openOrder.subtotalCents, openOrder.currency)}. These
+                are still held for you.
+              </p>
+              <Link
+                href={`/checkout/${openOrder.id}`}
+                className="mt-4 inline-block rounded bg-gold-dim px-5 py-2.5 text-sm font-semibold text-paper transition hover:brightness-95"
+              >
+                {openOrder.status === "PROCESSING"
+                  ? "Check that payment"
+                  : "Finish paying"}
+              </Link>
+            </div>
           )}
 
           {holds === null ? (
@@ -183,18 +260,17 @@ export default function CartPage() {
                 </div>
 
                 <div className="mt-5 border-t border-line pt-5">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <p className="text-sm font-medium text-ink">
-                      Checkout isn&apos;t built yet
-                    </p>
-                    <span className="rounded-full border border-gold/30 px-2.5 py-1 text-xs font-medium text-gold-dim">
-                      Planned
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm text-ink-dim">
-                    There&apos;s no payment step, so there&apos;s no button here
-                    pretending to take your money. Holds simply expire and put these
-                    items back in the shop.
+                  <button
+                    type="button"
+                    onClick={checkout}
+                    disabled={checkingOut}
+                    className="w-full rounded bg-gold-dim px-5 py-3 text-sm font-semibold text-paper transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {checkingOut ? "Starting checkout…" : "Proceed to checkout"}
+                  </button>
+                  <p className="mt-3 text-xs text-ink-dim">
+                    Your items stay held while you pay, so nobody can buy them out
+                    from under you. You can still cancel from the next step.
                   </p>
                 </div>
               </div>

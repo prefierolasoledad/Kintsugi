@@ -169,7 +169,6 @@ export default function AccountPage() {
                 title="My orders"
                 description="Track purchases and view past orders."
                 href="/account/orders"
-                badge={<PlannedBadge />}
               />
               <AccountCard
                 icon={<StarIcon />}
@@ -306,7 +305,7 @@ export default function AccountPage() {
                   title="Payouts"
                   description={
                     seller?.payoutsEnabled
-                      ? "Unlocked. Nothing to pay out yet — checkout isn't built."
+                      ? "Unlocked. Nothing to pay out — payments are sandbox only."
                       : "Locked until your identity is verified."
                   }
                   href="/seller/verify"

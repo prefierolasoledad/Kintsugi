@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import StarRating from "@/components/StarRating";
+import WishlistButton from "@/components/WishlistButton";
 import { type CatalogListing, discountPercent, formatPrice } from "@/lib/catalog";
 
 /**
@@ -54,15 +55,9 @@ export default function ListingCard({ item }: { item: CatalogListing }) {
 
         {/* Quick actions, top-right */}
         <div className="absolute top-3 right-3 flex flex-col gap-2">
-          <Link
-            href="/wishlist"
-            aria-label="Save for later"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-paper text-ink transition hover:bg-gold hover:text-paper"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20.8 5.6a5 5 0 00-7.1 0L12 7.3l-1.7-1.7a5 5 0 10-7.1 7.1L12 21.5l8.8-8.8a5 5 0 000-7.1z" />
-            </svg>
-          </Link>
+          {/* Was a plain link to /wishlist, which looked like a save button and
+              saved nothing. Now it actually saves. */}
+          <WishlistButton listingId={item.id} title={item.title} />
           <Link
             href={href}
             aria-label={`View ${item.title}`}

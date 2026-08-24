@@ -162,14 +162,15 @@ export default async function AboutPage() {
 
             <div className="mt-10 grid gap-8 lg:grid-cols-2">
               <p className="text-ink-dim">
-                There is no checkout yet. You can browse, hold an item so nobody
-                else takes it, and list things of your own — but you cannot pay for
-                anything, and no money has ever moved through this site.
+                Checkout runs against a payment sandbox. You can browse, hold an
+                item so nobody else takes it, list things of your own, and go all
+                the way through paying — but the card is a test card, no real money
+                has ever moved through this site, and nothing gets shipped.
               </p>
               <p className="text-ink-dim">
-                Where a feature is missing, the page says so instead of showing a
-                button that does nothing. Orders, saved addresses, and payment
-                methods are all marked as planned for the same reason. It seemed a
+                Payouts to sellers, saved addresses, and stored payment methods
+                genuinely don&apos;t exist. Where a feature is missing, the page
+                says so instead of showing a button that does nothing. It seemed a
                 poor start to be vague about it on a site built around disclosure.
               </p>
             </div>

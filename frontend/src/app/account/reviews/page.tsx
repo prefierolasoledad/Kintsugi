@@ -89,8 +89,8 @@ export default function MyReviewsPage() {
             <div className="mt-10 border border-line bg-blush p-10 text-center">
               <p className="text-ink">You haven&apos;t reviewed anything yet.</p>
               <p className="mx-auto mt-2 max-w-md text-sm text-ink-dim">
-                Reviews can only be written after buying, and checkout isn&apos;t built
-                yet — so this will fill up once that exists.
+                Reviews can only be written for something you&apos;ve bought, so
+                this fills up after your first order.
               </p>
               <Link
                 href="/search"

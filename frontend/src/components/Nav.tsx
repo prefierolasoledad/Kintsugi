@@ -7,6 +7,7 @@ import NotificationBell from "@/components/NotificationBell";
 import SearchWithFilters from "@/components/SearchWithFilters";
 import UserMenu from "@/components/UserMenu";
 import { useAuth } from "@/lib/AuthContext";
+import { useWishlist } from "@/lib/WishlistContext";
 
 const LINKS = [
   { key: "home", href: "/", label: "Home" },
@@ -22,6 +23,7 @@ const LINKS = [
 export default function Nav() {
   const [open, setOpen] = useState(false);
   const { user, loading, logout } = useAuth();
+  const { count: wishlistCount } = useWishlist();
 
 
   return (
@@ -65,10 +67,28 @@ export default function Nav() {
               </div>
             )}
 
-            <Link href="/wishlist" aria-label="Wishlist" className="text-ink transition hover:text-gold-dim">
+            <Link
+              href="/wishlist"
+              aria-label={
+                wishlistCount > 0
+                  ? `Wishlist, ${wishlistCount} saved`
+                  : "Wishlist"
+              }
+              className="relative text-ink transition hover:text-gold-dim"
+            >
               <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20.8 5.6a5 5 0 00-7.1 0L12 7.3l-1.7-1.7a5 5 0 10-7.1 7.1L12 21.5l8.8-8.8a5 5 0 000-7.1z" />
               </svg>
+              {/* aria-hidden because the count is already in the link's label —
+                  otherwise a screen reader reads the number twice. */}
+              {wishlistCount > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gold px-1 text-[10px] font-semibold text-paper"
+                >
+                  {wishlistCount > 9 ? "9+" : wishlistCount}
+                </span>
+              )}
             </Link>
 
             <Link href="/cart" aria-label="Cart" className="text-ink transition hover:text-gold-dim">

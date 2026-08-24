@@ -48,10 +48,40 @@ Inside that lock, one indivisible step:
 5. Decrement `quantity`, flip to `RESERVED` when it reaches zero
 6. Insert the `Reservation` row
 
-**Holds expire after 15 minutes** and are reclaimed lazily on the next attempt
-against that listing, so correctness never depends on a background sweeper. A
-sweeper is still worth adding so abandoned stock doesn't sit idle until someone
-happens to ask for it — but it is an optimisation, not a fix.
+**Holds expire after 15 minutes.** Reclaim happens in two places, and both are
+required:
+
+- **Lazily**, inside `reserveListing`, so any reservation attempt sees current
+  availability.
+- **On an interval**, via `releaseExpiredHolds()`.
+
+### Correction: the sweeper is not optional
+
+This record first said the sweeper was *"an optimisation, not a fix."* That was
+wrong, and it produced stuck inventory in practice — five listings became
+permanently invisible.
+
+The lazy path cannot recover a fully-held listing, because it deadlocks:
+
+1. the last unit is held, so `status` flips to `RESERVED`
+2. `RESERVED` listings are excluded from the catalog
+3. the hold expires — but nobody can attempt to reserve a listing they cannot
+   see, so the lazy reclaim never runs for it
+4. the listing stays invisible indefinitely
+
+Availability that can only be restored by someone requesting the very item that
+is hidden is not recoverable. It needs a trigger from outside the request path,
+which is what the sweeper is.
+
+It runs once at boot and then every 60 seconds, locking each listing row in the
+same order as every other path so it cannot deadlock against a live
+reservation, and re-checking each hold under that lock in case `reserveListing`
+reclaimed it first.
+
+**Known boundary:** the interval is per-process, so replicas would each run
+their own sweep. That is harmless — the work is idempotent under the row lock —
+but wasteful, and a single scheduled job is the better shape once there is more
+than one instance.
 
 **Every path locks the listing row first**, then touches reservations. One
 consistent ordering is what keeps this deadlock-free.

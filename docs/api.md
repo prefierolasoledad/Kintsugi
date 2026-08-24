@@ -454,11 +454,12 @@ Once verified:
 ```json
 { "payouts": { "enabled": true, "balanceCents": 0, "currency": "USD",
                "history": [],
-               "note": "Checkout isn't built yet, so there's nothing to pay out." } }
+               "note": "Payments are sandbox only and payouts aren't built, so there's nothing to pay out." } }
 ```
 
-The zero balance is honest, not a placeholder — no checkout exists, so no money
-has moved.
+The zero balance is honest, not a placeholder. Checkout exists, but it runs
+against a payment sandbox and there is no payout pipeline, so no real money has
+moved.
 
 ---
 

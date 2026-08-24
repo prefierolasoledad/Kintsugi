@@ -8,7 +8,7 @@ export default function MyCancellationsPage() {
     <AccountPlaceholder
       title="My cancellations"
       lead="Orders you cancel, and refunds owed against them, will be tracked here."
-      because="There are no orders to cancel yet — cancellations depend on checkout, which isn't built. Releasing a held item from your cart isn't a cancellation and needs no record."
+      because="Cancelled and failed orders show up in My orders with their status. A separate view here — with refunds and reasons — isn't built, because refunds aren't either."
       icon={<CancelIcon />}
     />
   );

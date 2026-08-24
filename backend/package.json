@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "test:payments": "tsx tests/payment-safety.ts",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "multer": "^2.2.0",
     "pg": "^8.23.0",
     "sharp": "^0.35.3",
+    "stripe": "^22.5.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
