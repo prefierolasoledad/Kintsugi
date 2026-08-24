@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter, Poppins } from "next/font/google";
+import SamePageLinkScroll from "@/components/SamePageLinkScroll";
 import { AuthProvider } from "@/lib/AuthContext";
 import "./globals.css";
 
@@ -34,7 +35,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${inter.variable} ${geistMono.variable} ${poppins.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <SamePageLinkScroll />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import * as api from "@/lib/api";
 import type { User } from "@/lib/api";
 
@@ -30,6 +30,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
+
+  /**
+   * Keeps a signed-in session from lapsing while a tab sits open.
+   *
+   * Access tokens last 15 minutes. Calling /api/auth/me before that returns a
+   * 401 the BFF handles by refreshing and retrying, so the session rolls
+   * forward and the user object stays current. The single-flight guard in
+   * backendProxy means this can't collide with other requests doing the same.
+   *
+   * Timers don't fire on a sleeping machine, so a visibility check covers the
+   * "closed the laptop for an hour" case that a bare interval would miss.
+   */
+  const lastCheck = useRef(Date.now());
+
+  // Keyed on the id, not the object: revalidating replaces `user` with a new
+  // object every 13 minutes, and depending on that would tear the timer down
+  // and rebuild it each time for no reason.
+  const userId = user?.id ?? null;
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const INTERVAL_MS = 13 * 60 * 1000;
+
+    async function revalidate() {
+      lastCheck.current = Date.now();
+      try {
+        const { user: fresh } = await api.me();
+        setUser(fresh);
+      } catch {
+        // Genuinely signed out — reflect that rather than showing a stale name.
+        setUser(null);
+      }
+    }
+
+    const timer = setInterval(revalidate, INTERVAL_MS);
+
+    function onVisible() {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastCheck.current < INTERVAL_MS) return;
+      revalidate();
+    }
+
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [userId]);
 
   const signup = useCallback(async (input: { name: string; email: string; password: string }) => {
     // Signup no longer logs the user in — the account is unverified until

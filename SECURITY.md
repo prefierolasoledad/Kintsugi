@@ -39,7 +39,8 @@ What is deliberately in place, with the reasoning in each linked record:
 Refresh tokens are stored as SHA-256 hashes, rotate on every use, and reuse of a
 rotated token revokes the whole family — theft is detected, not merely survived.
 All cookies are `httpOnly`, `sameSite=lax`, `secure` in production, so XSS
-cannot read a session.
+cannot read a session. The BFF performs refreshes single-flight, so concurrent
+requests expiring together cannot look like a replay and revoke a live session.
 → [ADR 0001](docs/adr/0001-access-and-refresh-tokens.md)
 
 **Passwords.** bcrypt cost 12. Minimum 12 characters with no composition rules,
@@ -84,6 +85,10 @@ Tracked, not hidden:
   each get their own allowance. Needs Redis before scaling out. Currently
   applied to uploads (30/hr) and verification attempts (5/hr) — not to
   login, which should have it.
+- **Single-flight refresh is also per-process.** Behind more than one instance,
+  concurrent refreshes would again trip reuse detection and revoke live
+  sessions. The backend needs a reuse grace window before scaling out.
+  → [ADR 0001](docs/adr/0001-access-and-refresh-tokens.md)
 - **No CSRF tokens.** `sameSite=lax` cookies plus a same-origin BFF cover the
   common cases, but state-changing requests have no additional token. Worth
   adding before deployment.
