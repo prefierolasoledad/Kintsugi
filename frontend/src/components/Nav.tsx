@@ -7,6 +7,7 @@ import NotificationBell from "@/components/NotificationBell";
 import SearchWithFilters from "@/components/SearchWithFilters";
 import UserMenu from "@/components/UserMenu";
 import { useAuth } from "@/lib/AuthContext";
+import { useCart } from "@/lib/CartContext";
 import { useWishlist } from "@/lib/WishlistContext";
 
 const LINKS = [
@@ -24,6 +25,7 @@ export default function Nav() {
   const [open, setOpen] = useState(false);
   const { user, loading, logout } = useAuth();
   const { count: wishlistCount } = useWishlist();
+  const { count: cartCount } = useCart();
 
 
   return (
@@ -91,12 +93,26 @@ export default function Nav() {
               )}
             </Link>
 
-            <Link href="/cart" aria-label="Cart" className="text-ink transition hover:text-gold-dim">
+            <Link
+              href="/cart"
+              aria-label={cartCount > 0 ? `Cart, ${cartCount} item${cartCount === 1 ? "" : "s"}` : "Cart"}
+              className="relative text-ink transition hover:text-gold-dim"
+            >
               <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="9" cy="20" r="1.5" />
                 <circle cx="18" cy="20" r="1.5" />
                 <path d="M2 3h2.5l2.4 11.2a2 2 0 002 1.6h8.6a2 2 0 002-1.5L21 7H6" />
               </svg>
+              {/* aria-hidden: the count is already in the link's label, so a
+                  screen reader would otherwise read the number twice. */}
+              {cartCount > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gold px-1 text-[10px] font-semibold text-paper"
+                >
+                  {cartCount > 9 ? "9+" : cartCount}
+                </span>
+              )}
             </Link>
 
             {loading ? null : user ? (

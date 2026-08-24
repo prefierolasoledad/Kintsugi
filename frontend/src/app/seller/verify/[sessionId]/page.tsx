@@ -7,20 +7,45 @@ import Footer from "@/components/Footer";
 import Nav from "@/components/Nav";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
-import { DOCUMENT_TYPE_OPTIONS, submitVerification } from "@/lib/sellerApi";
+import { DOCUMENT_TYPE_OPTIONS, getVerification, submitVerification } from "@/lib/sellerApi";
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-line bg-paper px-3 py-2.5 text-sm text-ink outline-none focus:border-gold";
 
 /**
- * Stands in for the provider's hosted capture page. A real provider (Stripe
- * Identity, Persona) hosts this itself and we never see the document at all —
- * which is the entire point of delegating it.
+ * Stands in for the provider's hosted capture page — STUB MODE ONLY.
+ *
+ * With Stripe Identity the capture happens on Stripe's own domain and this
+ * application never sees the document, which is the entire point of delegating
+ * it. So when a real provider is configured, this page must not collect
+ * anything: it sends the seller to the return page instead. The API refuses
+ * submissions in that mode too, so the guard isn't the only thing standing
+ * between a real provider and a document number in our logs.
  */
 export default function VerifySessionPage() {
   const router = useRouter();
   const params = useParams<{ sessionId: string }>();
   const { user, loading } = useAuth();
+  const [providerHosted, setProviderHosted] = useState(false);
+
+  useEffect(() => {
+    if (loading || !user?.isSeller) return;
+    let cancelled = false;
+    getVerification()
+      .then(({ verification }) => {
+        if (cancelled || verification.isStub) return;
+        setProviderHosted(true);
+        router.replace("/seller/verify/return");
+      })
+      .catch(() => {
+        // Can't tell which provider is live. Leaving the form up would risk
+        // collecting a document number under a real provider, so don't.
+        if (!cancelled) setProviderHosted(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, user?.isSeller, router]);
 
   const [documentType, setDocumentType] = useState("passport");
   const [country, setCountry] = useState("US");
@@ -69,7 +94,9 @@ export default function VerifySessionPage() {
     }
   }
 
-  if (loading || !user) {
+  // Covers the redirect above and its failure case: no capture form is rendered
+  // unless we positively know the stub is the active provider.
+  if (loading || !user || providerHosted) {
     return (
       <>
         <Nav />

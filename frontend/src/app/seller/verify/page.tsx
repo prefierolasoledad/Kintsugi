@@ -88,6 +88,12 @@ export default function VerifyPage() {
     setBusy(true);
     try {
       const { session } = await startVerification();
+      if (session.external) {
+        // Stripe hosts the capture. Leaving the site is the point: the document
+        // is uploaded to them and never passes through this application.
+        window.location.href = session.redirectUrl;
+        return;
+      }
       router.push(session.redirectUrl);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't start verification.");

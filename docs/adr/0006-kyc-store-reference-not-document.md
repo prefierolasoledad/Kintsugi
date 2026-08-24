@@ -81,3 +81,60 @@ first.
 **Direct Aadhaar eKYC.** Requires being a licensed entity or going through an
 aggregator (Signzy, Setu). Not available to a solo project; DigiLocker is the
 open government route if targeting India.
+
+## Update, 2026-08-24: Stripe Identity is wired
+
+The decision above is unchanged — this records that the seam it describes has
+been filled in. `KYC_PROVIDER=stripe_identity` now runs against real Stripe
+Identity in test mode, reusing the `STRIPE_SECRET_KEY` and
+`STRIPE_WEBHOOK_SECRET` that payments already needed (ADR 0013).
+
+**The swap made the privacy posture stronger, not merely equivalent.** The stub
+has to accept a document *number* into memory, because it needs something to
+decide from. Stripe Identity removes that field entirely: the seller uploads on
+Stripe's own domain and no document, and no number, reaches this process at all.
+The route that used to accept a submission now returns 409 `PROVIDER_HOSTED`
+under a real provider, and the local capture page refuses to render — so the
+stub is the weaker of the two models, which is worth stating plainly given the
+stub is the default.
+
+What is stored after a successful verification, in full:
+
+```json
+{ "kycStatus": "VERIFIED", "kycProvider": "stripe_identity",
+  "kycSessionId": "vs_1U7xfADdbGKgOLbC55g07jC3",
+  "kycDocType": null, "kycCountry": null, "kycRejectionReason": null }
+```
+
+`kycDocType` and `kycCountry` are deliberately null. Reading them back means
+expanding Stripe's `VerificationReport`, which is precisely the data this record
+says not to hold. The status is what gates payouts, so nothing needs them.
+
+### Two things the implementation had to get right
+
+**`requires_input` is ambiguous.** Stripe uses that one status for both "hasn't
+started yet" and "was refused". Only `last_error` separates them, so treating
+the status alone as a rejection would mark every freshly created session as a
+failed identity check. `interpret()` in `kycProvider.ts` handles this, and there
+is a test for exactly this case.
+
+**Webhooks get missed.** The decision arrives only by webhook, so a tunnel that
+wasn't running means a seller stuck on "pending" forever. `GET
+/seller/verification/:sessionId/status` asks the provider directly, and the
+return page polls it — the same reasoning as the reconciliation sweeper in ADR
+0013, and the third time in this codebase that a state which only an external
+event can resolve has needed a way to resolve itself.
+
+### Consequences of the swap
+
+- Selfie matching and live capture are required (`require_matching_selfie`,
+  `require_live_capture`). More friction for the seller; the right trade for a
+  gate on money leaving the platform, since a stolen document alone should not
+  be enough.
+- Sellers left `PENDING` on a stub session when the provider changed are not
+  stranded: the dead session is closed and a real one started on their next
+  attempt. Tested, because the site owner's own account was in that state.
+- Test mode verifies nobody. Same caveat as the stub, and stated in the UI.
+- Stripe Identity is charged per verification in live mode, and its country
+  coverage is narrower than Stripe payments — the DigiLocker/aggregator note
+  above remains the India production path.

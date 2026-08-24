@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import Stripe from "stripe";
+import { env, getStripe, verifyStripeWebhook } from "./stripeClient";
 
 /**
  * Payment provider.
@@ -35,23 +36,6 @@ import Stripe from "stripe";
  * PAYMENT_PROVIDER=stub is the default so development needs no account. Stripe
  * signup is invite-only in some countries, so an account cannot be assumed.
  */
-
-/**
- * Reads a configuration value, trimming it and treating blank as unset.
- *
- * Trimming is not fussiness. A key pasted into .env with a stray leading space
- * — `STRIPE_WEBHOOK_SECRET=" whsec_..."` — is truthy, so every "is it set"
- * check passes, and the failure surfaces much later as an unexplained
- * signature mismatch on every webhook. Copy-paste whitespace is the single most
- * likely way this file gets misconfigured, so it is handled once, here, rather
- * than debugged repeatedly.
- */
-function env(name: string): string | undefined {
-  const raw = process.env[name];
-  if (raw === undefined) return undefined;
-  const trimmed = raw.trim();
-  return trimmed === "" ? undefined : trimmed;
-}
 
 export const PAYMENT_PROVIDER = env("PAYMENT_PROVIDER") ?? "stub";
 
@@ -244,33 +228,24 @@ const stubIdempotency = new Map<string, string>();
  * Stripe adapter
  * ------------------------------------------------------------------ */
 
-let stripeClient: Stripe | null = null;
-
+/**
+ * The client comes from lib/stripeClient.ts rather than being built here.
+ *
+ * Identity verification uses Stripe too, and PAYMENT_PROVIDER=stub with
+ * KYC_PROVIDER=stripe_identity is a legitimate setup — so the client cannot be
+ * owned by the payments module. That module also holds the key validation and
+ * the shared webhook signature check.
+ */
 function stripe(): Stripe {
-  if (!stripeClient) {
-    const key = env("STRIPE_SECRET_KEY");
-    if (!key) {
-      throw new PaymentError(
-        'PAYMENT_PROVIDER="stripe" needs STRIPE_SECRET_KEY. Use a test-mode key ' +
-          "(sk_test_…); a live key is refused below."
-      );
-    }
-    if (!key.startsWith("sk_test_") && process.env.NODE_ENV !== "production") {
-      // A live key outside production would take real money during testing.
-      throw new PaymentError(
-        "STRIPE_SECRET_KEY is not a test key. Refusing to start outside production."
-      );
-    }
-    stripeClient = new Stripe(key, {
-      // Pinned: an unpinned version means Stripe can change response shapes
-      // under a running deployment.
-      apiVersion: "2026-07-29.dahlia",
-      maxNetworkRetries: 2,
-      timeout: 20_000,
-      appInfo: { name: "Kintsugi", url: "https://github.com/prefierolasoledad/Kintsugi" },
-    });
+  try {
+    return getStripe();
+  } catch (err) {
+    // Presented as a payment error so the route's error handling still applies.
+    throw new PaymentError(
+      err instanceof Error ? err.message : "Stripe is not configured.",
+      false
+    );
   }
-  return stripeClient;
 }
 
 function assertKnownProvider() {
@@ -598,41 +573,21 @@ export type PaymentEvent = {
   outcome: PaymentOutcome | null;
 };
 
+export const PAYMENT_EVENTS = [
+  "payment_intent.succeeded",
+  "payment_intent.payment_failed",
+  "payment_intent.canceled",
+];
+
 /**
- * Verifies and parses a provider webhook.
+ * Interprets an already-verified payment event.
  *
- * The signature check is the whole security model here: without it this
- * endpoint is an unauthenticated "mark my order paid" button. Stripe signs the
- * raw bytes, so the body must not have been parsed or re-serialised before it
- * reaches this function.
+ * Signature checking now lives in lib/stripeClient.ts, because one endpoint
+ * receives both payment and identity events and has to verify them the same
+ * way regardless of which feature is switched on.
  */
-export function verifyWebhook(rawBody: Buffer, signature: string | undefined): PaymentEvent {
-  if (PAYMENT_PROVIDER !== "stripe") {
-    throw new PaymentError("Webhooks are only supported with the Stripe adapter.");
-  }
-  const secret = env("STRIPE_WEBHOOK_SECRET");
-  if (!secret) {
-    throw new PaymentError("STRIPE_WEBHOOK_SECRET is not set; refusing to trust this webhook.");
-  }
-  if (!signature) {
-    throw new PaymentError("Missing Stripe signature header.");
-  }
-
-  let event: Stripe.Event;
-  try {
-    event = stripe().webhooks.constructEvent(rawBody, signature, secret);
-  } catch {
-    // Deliberately opaque: a caller probing this endpoint learns nothing about
-    // why their forgery failed.
-    throw new PaymentError("Invalid webhook signature.");
-  }
-
-  const relevant = [
-    "payment_intent.succeeded",
-    "payment_intent.payment_failed",
-    "payment_intent.canceled",
-  ];
-  if (!relevant.includes(event.type)) {
+export function readPaymentEvent(event: Stripe.Event): PaymentEvent {
+  if (!PAYMENT_EVENTS.includes(event.type)) {
     return { id: event.id, type: event.type, intentId: "", outcome: null };
   }
 

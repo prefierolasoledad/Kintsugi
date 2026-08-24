@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import Countdown from "@/components/Countdown";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
+import { useCart } from "@/lib/CartContext";
 import { getMyHolds, holdListing, releaseHold } from "@/lib/reservationsApi";
 
 type Hold = { id: string; expiresAt: string; quantity: number };
@@ -21,6 +22,9 @@ export default function ReserveButton({
 }) {
   const router = useRouter();
   const { user, loading } = useAuth();
+  // Named to avoid colliding with this component's own `refresh`, which
+  // re-reads whether the viewer holds *this* listing.
+  const { refresh: refreshCart } = useCart();
 
   const [hold, setHold] = useState<Hold | null>(null);
   const [checking, setChecking] = useState(true);
@@ -60,6 +64,8 @@ export default function ReserveButton({
         expiresAt: reservation.expiresAt,
         quantity: reservation.quantity,
       });
+      // The nav badge is rendered elsewhere and has no other way to know.
+      void refreshCart();
       router.refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't hold that item.");
@@ -77,6 +83,7 @@ export default function ReserveButton({
     try {
       await releaseHold(hold.id);
       setHold(null);
+      void refreshCart();
       router.refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't release that hold.");

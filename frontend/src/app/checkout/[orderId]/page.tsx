@@ -8,6 +8,7 @@ import Nav from "@/components/Nav";
 import OrderLines from "@/components/OrderLines";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
+import { useCart } from "@/lib/CartContext";
 import { formatPrice } from "@/lib/catalog";
 import {
   cancelOrder,
@@ -34,6 +35,7 @@ export default function CheckoutPage() {
   const params = useParams<{ orderId: string }>();
   const orderId = params.orderId;
   const { user, loading } = useAuth();
+  const { refresh: refreshCart } = useCart();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -76,6 +78,8 @@ export default function CheckoutPage() {
       // Cleared regardless of outcome — there is no reason to keep it around.
       setCardNumber("");
       setOrder(result.order);
+      // Paid or failed, the order stops holding stock and leaves the cart.
+      void refreshCart();
 
       if (result.outcome === "succeeded") {
         router.push(`/orders/${orderId}`);
@@ -132,6 +136,7 @@ export default function CheckoutPage() {
     setCancelling(true);
     try {
       await cancelOrder(orderId);
+      void refreshCart();
       router.push("/cart?cancelled=1");
     } catch (err) {
       setError(

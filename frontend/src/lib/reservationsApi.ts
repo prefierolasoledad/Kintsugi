@@ -36,8 +36,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+export type CartSummary = {
+  /** Held lines plus the lines of an unpaid order. What the nav badge shows. */
+  count: number;
+  heldCount: number;
+  openOrderItems: number;
+  /** When the soonest hold lapses, so the client can refresh exactly then. */
+  nextExpiresAt: string | null;
+  openOrder: { id: string; reference: string; status: string } | null;
+};
+
 export function getMyHolds() {
   return request<{ reservations: HeldReservation[]; holdMinutes: number }>("");
+}
+
+export function getCartSummary() {
+  return request<CartSummary>("/summary");
 }
 
 export function holdListing(listingId: string, quantity = 1) {

@@ -7,11 +7,28 @@ import {
   releaseReservation,
   reserveListing,
 } from "../lib/reservations";
+import { cartSummary } from "../lib/cart";
 import { requireAuth } from "../middleware/requireAuth";
 
 export const reservationsRouter = Router();
 
 reservationsRouter.use(requireAuth);
+
+/**
+ * Everything the cart badge needs, in one request.
+ *
+ * Declared before `/:id` so "summary" is never mistaken for a reservation id.
+ * Kept separate from GET / because the nav renders on every page and has no
+ * use for titles, prices, or images.
+ */
+reservationsRouter.get("/summary", async (req, res) => {
+  try {
+    res.json(await cartSummary(req.userId!));
+  } catch (err) {
+    console.error("GET /reservations/summary failed", err);
+    res.status(500).json({ error: "Could not load your cart." });
+  }
+});
 
 const createBody = z.object({
   listingId: z.string().min(1),

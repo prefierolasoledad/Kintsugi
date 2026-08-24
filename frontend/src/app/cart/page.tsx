@@ -9,6 +9,7 @@ import Footer from "@/components/Footer";
 import Nav from "@/components/Nav";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
+import { useCart } from "@/lib/CartContext";
 import { formatPrice } from "@/lib/catalog";
 import { getMyOrders, isOpen, startCheckout, type Order } from "@/lib/ordersApi";
 import {
@@ -20,6 +21,7 @@ import {
 export default function CartPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
+  const { refresh: refreshCart } = useCart();
 
   const [holds, setHolds] = useState<HeldReservation[] | null>(null);
   const [holdMinutes, setHoldMinutes] = useState(15);
@@ -77,6 +79,9 @@ export default function CartPage() {
     setCheckingOut(true);
     try {
       const { order } = await startCheckout();
+      // Holds became order lines. The total is unchanged, but where it comes
+      // from isn't, so the badge has to be re-read rather than assumed.
+      void refreshCart();
       router.push(`/checkout/${order.id}`);
     } catch (err) {
       setError(
@@ -96,6 +101,7 @@ export default function CartPage() {
     try {
       await releaseHold(id);
       await load();
+      void refreshCart();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't release that hold.");
     } finally {

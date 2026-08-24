@@ -159,9 +159,33 @@ export function getVerification() {
 
 export function startVerification() {
   return request<{
-    session: { providerSessionId: string; redirectUrl: string };
+    session: {
+      providerSessionId: string;
+      redirectUrl: string;
+      /**
+       * True when redirectUrl points at the provider's own site rather than
+       * ours, so the caller navigates away instead of routing internally. With
+       * a real provider the document never touches this application.
+       */
+      external: boolean;
+    };
     resumed: boolean;
   }>("/verification", { method: "POST" });
+}
+
+/**
+ * Asks the provider where a session stands.
+ *
+ * The webhook is the primary path; this is the fallback for when one is missed,
+ * so a seller isn't left on "pending" forever because of a lost HTTP request.
+ */
+export function getVerificationSessionStatus(sessionId: string) {
+  return request<{
+    status: VerificationStatus;
+    rejectionReason: string | null;
+    payoutsEnabled: boolean;
+    settledBy: "poll" | "already" | null;
+  }>(`/verification/${sessionId}/status`);
 }
 
 export function submitVerification(sessionId: string, input: DocumentSubmission) {

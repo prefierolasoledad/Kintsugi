@@ -1,7 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
-import { DOCUMENT_TYPES, KYC_PROVIDER, decide, startSession } from "../lib/kycProvider";
+import {
+  DOCUMENT_TYPES,
+  KYC_PROVIDER,
+  decide,
+  getSessionState,
+  isStubKyc,
+  resumeSession,
+  startSession,
+} from "../lib/kycProvider";
 import { prisma } from "../lib/prisma";
+import { applyDecision } from "../lib/verification";
 import { checkRateLimit } from "../lib/rateLimit";
 import { requireAuth } from "../middleware/requireAuth";
 import { requireSeller } from "../middleware/requireSeller";
@@ -16,6 +25,8 @@ import { VerificationStatus } from "../generated/prisma/enums";
  * step that needs a verified identity behind it.
  */
 export const sellerVerificationRouter = Router();
+
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
 
 sellerVerificationRouter.use(requireAuth, requireSeller);
 
@@ -79,7 +90,7 @@ sellerVerificationRouter.get("/verification", async (req, res) => {
         payoutsEnabled: profile.payoutsEnabled,
         // Surfaced so the UI can label the stub honestly rather than implying a
         // real identity check took place.
-        isStub: KYC_PROVIDER === "stub",
+        isStub: isStubKyc(),
       },
       attempts: attempts.map(serializeAttempt),
     });
@@ -117,23 +128,35 @@ sellerVerificationRouter.post("/verification", async (req, res) => {
       });
     }
 
-    // An in-flight session is resumed rather than duplicated.
+    // An in-flight session is resumed rather than duplicated. With Stripe the
+    // hosted link expires, so resuming re-reads the session for a fresh URL
+    // rather than handing back the one issued the first time.
     const pending = await prisma.kycAttempt.findFirst({
       where: { sellerProfileId: profile.id, status: VerificationStatus.PENDING },
       orderBy: { createdAt: "desc" },
     });
 
     if (pending) {
-      return res.json({
-        session: {
-          providerSessionId: pending.providerSessionId,
-          redirectUrl: `/seller/verify/${pending.providerSessionId}`,
+      const resumedSession = await resumeSession(pending.providerSessionId);
+      if (resumedSession) {
+        return res.json({ session: resumedSession, resumed: true });
+      }
+      // The old session is dead at the provider. Close it out and fall through
+      // to starting a fresh one rather than stranding the seller.
+      await prisma.kycAttempt.update({
+        where: { id: pending.id },
+        data: {
+          status: VerificationStatus.REJECTED,
+          rejectionReason: "That check expired before it was finished.",
+          completedAt: new Date(),
         },
-        resumed: true,
       });
     }
 
-    const session = startSession();
+    const session = await startSession({
+      sellerProfileId: profile.id,
+      returnUrl: `${FRONTEND_ORIGIN}/seller/verify/return`,
+    });
 
     await prisma.$transaction([
       prisma.kycAttempt.create({
@@ -179,6 +202,15 @@ const submissionBody = z.object({
  */
 sellerVerificationRouter.post("/verification/:sessionId/submit", async (req, res) => {
   try {
+    if (!isStubKyc()) {
+      // With a real provider the seller submits at the provider. Accepting a
+      // document number here would put one back in our process for no reason.
+      return res.status(409).json({
+        error: "Verification is completed at the provider, not here.",
+        code: "PROVIDER_HOSTED",
+      });
+    }
+
     const parsed = submissionBody.safeParse(req.body);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
@@ -210,43 +242,123 @@ sellerVerificationRouter.post("/verification/:sessionId/submit", async (req, res
     }
 
     const decision = decide(parsed.data);
-    const verified = decision.outcome === "VERIFIED";
-    const now = new Date();
 
-    // The decision and the payout permission are written together: payouts must
-    // never end up enabled without a verified decision recorded beside them.
-    await prisma.$transaction([
-      prisma.kycAttempt.update({
-        where: { id: attempt.id },
-        data: {
-          status: verified ? VerificationStatus.VERIFIED : VerificationStatus.REJECTED,
-          documentType: decision.documentType,
-          country: decision.country,
-          rejectionReason: verified ? null : decision.rejectionReason,
-          completedAt: now,
-        },
-      }),
-      prisma.sellerProfile.update({
-        where: { id: attempt.sellerProfileId },
-        data: {
-          kycStatus: verified ? VerificationStatus.VERIFIED : VerificationStatus.REJECTED,
-          kycDocType: decision.documentType,
-          kycCountry: decision.country,
-          kycVerifiedAt: verified ? now : null,
-          kycRejectionReason: verified ? null : decision.rejectionReason,
-          payoutsEnabled: verified,
-        },
-      }),
-    ]);
+    // Same writer the webhook uses, so the two paths cannot drift apart on the
+    // one thing that matters: never enabling payouts without a recorded decision.
+    const applied = await applyDecision({
+      providerSessionId: req.params.sessionId,
+      sellerProfileId: req.sellerId,
+      decision,
+    });
+
+    if (!applied.applied) {
+      return res.status(409).json({
+        error: "That verification session is already finished.",
+        code: "SESSION_CLOSED",
+      });
+    }
 
     res.json({
       outcome: decision.outcome,
-      rejectionReason: verified ? null : decision.rejectionReason,
-      payoutsEnabled: verified,
+      rejectionReason: decision.outcome === "REJECTED" ? decision.rejectionReason : null,
+      payoutsEnabled: applied.verified,
     });
   } catch (err) {
     console.error("POST /seller/verification/:sessionId/submit failed", err);
     res.status(500).json({ error: "Could not complete verification." });
+  }
+});
+
+/**
+ * Where a session stands, asked of the provider directly.
+ *
+ * WHY THIS EXISTS ALONGSIDE THE WEBHOOK
+ * The webhook is the primary path, and webhooks get missed: the tunnel wasn't
+ * running, the process was restarting, the delivery failed its retries. A
+ * seller left staring at "pending" forever because of one lost HTTP request is
+ * not an acceptable outcome, so the page they land on after Stripe can poll
+ * this and settle it themselves.
+ *
+ * Scoped to the owner, so nobody can read or resolve another seller's session.
+ */
+sellerVerificationRouter.get("/verification/:sessionId/status", async (req, res) => {
+  try {
+    const attempt = await prisma.kycAttempt.findFirst({
+      where: { providerSessionId: req.params.sessionId, sellerProfileId: req.sellerId },
+      select: { status: true, rejectionReason: true, provider: true },
+    });
+
+    if (!attempt) {
+      return res
+        .status(404)
+        .json({ error: "Verification session not found.", code: "NOT_FOUND" });
+    }
+
+    // Already settled, by webhook or by an earlier poll.
+    if (attempt.status !== VerificationStatus.PENDING) {
+      const profile = await prisma.sellerProfile.findUnique({
+        where: { id: req.sellerId },
+        select: { payoutsEnabled: true },
+      });
+      return res.json({
+        status: attempt.status,
+        rejectionReason: attempt.rejectionReason,
+        payoutsEnabled: profile?.payoutsEnabled ?? false,
+        settledBy: "already",
+      });
+    }
+
+    if (isStubKyc()) {
+      // No provider-side state to consult; the stub waits on a submission.
+      return res.json({
+        status: VerificationStatus.PENDING,
+        rejectionReason: null,
+        payoutsEnabled: false,
+        settledBy: null,
+      });
+    }
+
+    const state = await getSessionState(req.params.sessionId);
+
+    if (state.state === "PENDING") {
+      return res.json({
+        status: VerificationStatus.PENDING,
+        rejectionReason: null,
+        payoutsEnabled: false,
+        settledBy: null,
+      });
+    }
+
+    if (state.state === "CANCELLED") {
+      return res.json({
+        status: VerificationStatus.UNSTARTED,
+        rejectionReason: null,
+        payoutsEnabled: false,
+        settledBy: "poll",
+      });
+    }
+
+    const applied = await applyDecision({
+      providerSessionId: req.params.sessionId,
+      sellerProfileId: req.sellerId,
+      decision: state.decision,
+    });
+
+    res.json({
+      status: applied.applied
+        ? applied.verified
+          ? VerificationStatus.VERIFIED
+          : VerificationStatus.REJECTED
+        : VerificationStatus.PENDING,
+      rejectionReason:
+        state.decision.outcome === "REJECTED" ? state.decision.rejectionReason : null,
+      payoutsEnabled: applied.applied ? applied.verified : false,
+      // Useful in the logs: says whether the webhook or the poll got there first.
+      settledBy: "poll",
+    });
+  } catch (err) {
+    console.error("GET /seller/verification/:sessionId/status failed", err);
+    res.status(500).json({ error: "Could not check that verification." });
   }
 });
 
