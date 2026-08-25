@@ -177,6 +177,81 @@ Availability is decided under a `SELECT … FOR UPDATE` lock on the listing row,
 two buyers can never both claim the same unique item.
 → [ADR 0012](../adr/0012-row-locking-for-reservations.md)
 
+### `wishlist_items`
+
+A saved listing. Deliberately the **opposite** of a reservation: no quantity, no
+expiry, and no effect whatsoever on availability. Two people can save the same
+one-of-a-kind chair and neither has claimed anything.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `userId` | uuid | FK → users, cascade |
+| `listingId` | uuid | FK → listings, cascade |
+
+`@@unique([userId, listingId])` makes saving idempotent. A double-tapped heart,
+or the same listing open in two tabs, cannot produce two rows — the app relies
+on the index rather than checking first and inserting after, which is the same
+read-then-write race as ADR 0012.
+
+### `addresses`
+
+Where orders get delivered. **Soft-deleted, and never referenced by an order.**
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `userId` | uuid | FK → users, cascade |
+| `fullName`, `line1`, `line2?`, `city`, `region?`, `postcode` | text | Loose by design |
+| `country` | text | ISO 3166-1 alpha-2 |
+| `phone` | text? | For the courier |
+| `isDefault` | bool | At most one live row per user |
+| `deletedAt` | timestamp? | Soft delete |
+
+Only `country` is validated strictly. Address formats differ enough between
+countries that structured rules reject more real addresses than they catch bad
+ones — a UK postcode, an Irish Eircode, and a Hong Kong address with no postcode
+are all legitimate.
+
+"At most one default" is enforced **in a transaction**, not by a constraint:
+Prisma cannot express a partial unique index on
+`isDefault = true AND deletedAt IS NULL`.
+
+### `orders`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `reference` | text | Unique, human-facing (`KIN-XXXXXX`), no O/0 or I/1 |
+| `buyerId` | uuid | FK → users, cascade |
+| `status` | enum | Payment state only |
+| `subtotalCents` | int | Integer minor units |
+| `paymentIntentId` | text? | **Unique** — one payment per order |
+| `shipTo*` | text? | Eight columns: a **snapshot**, not a relation |
+
+The `shipTo*` columns are copied from an `Address` at checkout. A foreign key
+would let last year's parcel silently move house when the buyer edits their
+address book, and would break outright if they deleted it.
+
+`paymentIntentId` being unique is what the double-charge defence rests on, and
+is why a basket is **not** split into one order per seller.
+
+### `order_items`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `orderId` | uuid | FK, cascade |
+| `listingId` | uuid? | SetNull — an order outlives a deleted listing |
+| `sellerId` | uuid? | SetNull → seller_profiles |
+| `title`, `unitPriceCents`, `sellerName` | — | Snapshots at purchase |
+| `fulfilment` | enum | Per line, not per order |
+| `shippedAt`, `deliveredAt`, `carrier`, `trackingNumber`, `fulfilmentNote` | — | |
+
+`sellerId` is the field that makes a seller sales view possible at all. Lines
+previously carried only `sellerName` — a display string, not something to query
+by — which is why sellers could not see their own orders.
+
+Fulfilment lives here rather than on `orders` because a basket can span several
+sellers, and two sellers cannot share one parcel. "Your order has shipped" is
+not something that can honestly be said about a whole order.
+
 ---
 
 ## Enums
@@ -187,6 +262,13 @@ two buyers can never both claim the same unique item.
 | `Condition` | `LIKE_NEW`, `GOOD`, `WELL_LOVED`, `NEEDS_REPAIR` |
 | `VerificationStatus` | `UNSTARTED`, `PENDING`, `VERIFIED`, `REJECTED` |
 | `ReservationStatus` | `HELD`, `RELEASED`, `CONVERTED`, `EXPIRED` |
+| `OrderStatus` | `PENDING_PAYMENT`, `PROCESSING`, `PAID`, `FAILED`, `CANCELLED`, `REFUNDED` |
+| `FulfilmentStatus` | `UNFULFILLED`, `SHIPPED`, `DELIVERED`, `UNFULFILLABLE` |
+
+`OrderStatus` and `FulfilmentStatus` are deliberately separate. Payment and
+delivery are independent facts — an order is `PAID` *and* `UNFULFILLED` for as
+long as it takes a seller to reach a post office, and one enum cannot hold both.
+`PROCESSING` is the mutual-exclusion state that prevents double charging.
 
 ## Invariants
 
@@ -205,6 +287,20 @@ Enforced in the application layer unless noted:
    under a row lock, not by a check constraint.
 9. At most one `HELD` reservation per (listing, buyer) — enforced by the
    database.
+10. One payment per order — `paymentIntentId` is unique, enforced by the
+    database. This is what makes splitting a basket across orders impossible
+    without breaking the double-charge defence.
+11. An order's `shipTo*` is immutable once written. Editing or deleting the
+    `Address` it came from must never change it.
+12. One wishlist row per (user, listing) — enforced by the database.
+13. `payoutsEnabled` and a `VERIFIED` decision are written in the same
+    transaction, so payouts can never be enabled without a recorded decision
+    beside them.
+14. A review requires a `PAID` order containing that listing, and a seller can
+    never review their own — checked in that order, so a seller is told they own
+    it rather than being sent off to buy it.
+15. Fulfilment only advances `UNFULFILLED → SHIPPED → DELIVERED`, and only on
+    `PAID` orders. `DELIVERED` is set by the **buyer**, never the seller.
 
 ## Migrations
 

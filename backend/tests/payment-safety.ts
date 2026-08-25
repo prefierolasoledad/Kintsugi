@@ -70,6 +70,16 @@ async function buyer(tag: string) {
   await prisma.user.update({ where: { email }, data: { emailVerified: true } });
   const j = jar();
   await call(j, "POST", "/auth/login", { email, password: PASSWORD });
+
+  // Checkout requires a delivery address. Created through the API rather than
+  // inserted directly, so this suite goes through the same door a buyer does.
+  await call(j, "POST", "/addresses", {
+    fullName: "Payment Test",
+    line1: "12 Kiln Lane",
+    city: "Bristol",
+    postcode: "BS1 4TR",
+    country: "GB",
+  });
   return j;
 }
 

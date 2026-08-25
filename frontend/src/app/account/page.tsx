@@ -215,7 +215,7 @@ export default function AccountPage() {
                 icon={<AddressIcon />}
                 title="Addresses"
                 description="Where your orders get delivered."
-                badge={<PlannedBadge />}
+                href="/account/addresses"
               />
               <AccountCard
                 icon={<CardIcon />}
@@ -260,6 +260,12 @@ export default function AccountPage() {
               </div>
             ) : (
               <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                <AccountCard
+                  icon={<OrdersIcon />}
+                  title="Sales"
+                  description="What people have bought from you, and what needs sending."
+                  href="/seller/sales"
+                />
                 <AccountCard
                   icon={<TagIcon />}
                   title="Your listings"

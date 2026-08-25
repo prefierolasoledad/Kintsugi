@@ -7,9 +7,11 @@ A marketplace for secondhand furniture, clothing, and objects, where condition
 is disclosed rather than hidden. Built as a full-stack TypeScript application:
 a Next.js storefront, an Express API, and PostgreSQL.
 
-> **Status: in development.** Browsing, accounts, seller listings, and checkout
-> work end to end. Payments run against a sandbox — no real money moves, and
-> there is no payout pipeline. See [Roadmap](#roadmap).
+> **Status: in development.** Browsing, accounts, seller listings, checkout,
+> identity verification, and order fulfilment work end to end, covered by ~400
+> assertions (`npm test`). Payments and identity run against sandboxes — no real
+> money moves, no real document is checked. Email, refunds, and payouts are not
+> built. See [Roadmap](#roadmap).
 
 ---
 

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import Footer from "@/components/Footer";
 import Nav from "@/components/Nav";
 import OrderLines from "@/components/OrderLines";
+import ShipToCard from "@/components/ShipToCard";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import { useCart } from "@/lib/CartContext";
@@ -226,6 +227,24 @@ export default function CheckoutPage() {
             </p>
           )}
         </section>
+
+        {/* Where it's going. On the summary side rather than the payment side,
+            because it's a fact about the order, not a step in paying. */}
+        <div className="lg:col-start-1">
+          <ShipToCard
+            shipTo={order.shipTo}
+            /* Only offer a change while the order can still be replaced — the
+               address is copied onto the order, so "change" means cancel and
+               start again rather than edit in place. */
+            changeHref={payable ? "/account/addresses" : undefined}
+          />
+          {payable && (
+            <p className="mt-2 text-xs text-ink-dim">
+              Changing your address updates your address book. This order keeps
+              the address above — cancel and check out again to use a new one.
+            </p>
+          )}
+        </div>
 
         {/* ---------------- Payment ---------------- */}
         <section className="rounded-2xl border border-line bg-paper-card p-6">

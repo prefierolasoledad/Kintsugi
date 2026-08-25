@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { prisma } from "./prisma";
+import { defaultAddress, getAddress, toOrderSnapshot } from "./addresses";
 import { cancelIntent, getIntent } from "./paymentProvider";
 import { TX_OPTIONS, lockListing } from "./reservations";
 import {
@@ -76,6 +77,14 @@ const orderSelect = {
   paidAt: true,
   failureReason: true,
   createdAt: true,
+  shipToName: true,
+  shipToLine1: true,
+  shipToLine2: true,
+  shipToCity: true,
+  shipToRegion: true,
+  shipToPostcode: true,
+  shipToCountry: true,
+  shipToPhone: true,
   items: {
     select: {
       id: true,
@@ -84,6 +93,12 @@ const orderSelect = {
       unitPriceCents: true,
       quantity: true,
       sellerName: true,
+      fulfilment: true,
+      shippedAt: true,
+      deliveredAt: true,
+      carrier: true,
+      trackingNumber: true,
+      fulfilmentNote: true,
       listing: { select: { slug: true, images: { take: 1, orderBy: { position: "asc" as const }, select: { url: true } } } },
     },
   },
@@ -96,7 +111,27 @@ const orderSelect = {
  * several of them — two buyers checking out overlapping carts would otherwise
  * be able to grab the same two rows in opposite orders and deadlock.
  */
-export async function createOrderFromHolds(userId: string) {
+export async function createOrderFromHolds(userId: string, addressId?: string) {
+  /**
+   * The delivery address is resolved and COPIED before the transaction, then
+   * written onto the order as plain fields. No foreign key: the buyer can edit
+   * or delete that address tomorrow, and this order still has to say where it
+   * was actually sent. Same reasoning as the title and price snapshots below.
+   */
+  const chosen = addressId
+    ? await getAddress(userId, addressId)
+    : await defaultAddress(userId);
+
+  if (!chosen) {
+    throw new OrderError(
+      "NO_ADDRESS",
+      addressId
+        ? "That delivery address is no longer available."
+        : "Add a delivery address before checking out.",
+      400
+    );
+  }
+
   return prisma.$transaction(async (tx) => {
     const now = new Date();
 
@@ -118,6 +153,7 @@ export async function createOrderFromHolds(userId: string) {
     let currency = "USD";
     const items: {
       listingId: string;
+      sellerId: string;
       title: string;
       unitPriceCents: number;
       quantity: number;
@@ -137,6 +173,7 @@ export async function createOrderFromHolds(userId: string) {
           title: true,
           priceCents: true,
           currency: true,
+          sellerId: true,
           seller: { select: { shopName: true } },
         },
       });
@@ -159,6 +196,9 @@ export async function createOrderFromHolds(userId: string) {
 
       items.push({
         listingId: hold.listingId,
+        // A real reference, unlike sellerName below — this is what lets a
+        // seller ask "what did I sell?", which they previously could not.
+        sellerId: listing.sellerId,
         // Snapshots: the seller can rename or reprice this tomorrow, and the
         // order still has to say what was bought for how much.
         title: listing.title,
@@ -175,6 +215,7 @@ export async function createOrderFromHolds(userId: string) {
         status: OrderStatus.PENDING_PAYMENT,
         subtotalCents,
         currency,
+        ...toOrderSnapshot(chosen),
         items: { create: items },
       },
       select: orderSelect,

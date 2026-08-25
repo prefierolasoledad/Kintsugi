@@ -137,9 +137,20 @@ export async function pickStars(page: Page, rating: number) {
 }
 
 /**
- * Splits real failures from the auth context asking "am I signed in?" before
- * login and being told no, which is a 401 by design.
+ * Splits real failures from the ones a suite deliberately provokes.
+ *
+ * Two kinds are expected:
+ *   [pre-login]  the auth context asking "am I signed in?" and being told no,
+ *                which is a 401 by design
+ *   [expected…]  a suite testing a refusal on purpose — a checkout with no
+ *                address, say, which must 400
+ *
+ * A 5xx is never excused, whatever phase it happened in: those are bugs even
+ * when a test was expecting a rejection.
  */
 export function realFailures(badResponses: string[]) {
-  return badResponses.filter((r) => !r.startsWith("[pre-login]") || / 5\d\d /.test(r));
+  return badResponses.filter((r) => {
+    if (/ 5\d\d /.test(r)) return true;
+    return !r.startsWith("[pre-login]") && !r.startsWith("[expected");
+  });
 }

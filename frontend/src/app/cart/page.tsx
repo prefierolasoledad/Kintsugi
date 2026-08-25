@@ -84,6 +84,15 @@ export default function CartPage() {
       void refreshCart();
       router.push(`/checkout/${order.id}`);
     } catch (err) {
+      /**
+       * No address yet is not an error, it's a missing step. Sending them to
+       * the form with ?next means they land back here with one saved, rather
+       * than reading a message and having to work out where to go.
+       */
+      if (err instanceof ApiError && err.code === "NO_ADDRESS") {
+        router.push("/account/addresses?next=/cart");
+        return;
+      }
       setError(
         err instanceof ApiError
           ? err.message

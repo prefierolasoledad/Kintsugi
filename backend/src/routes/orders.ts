@@ -20,6 +20,7 @@ import {
   isTestMode,
   normaliseCardNumber,
 } from "../lib/paymentProvider";
+import { SalesError, markDelivered } from "../lib/sales";
 import { requireAuth } from "../middleware/requireAuth";
 import { OrderStatus } from "../generated/prisma/enums";
 
@@ -45,6 +46,22 @@ function serialize(order: Awaited<ReturnType<typeof getOrder>>) {
     paidAt: order.paidAt ? order.paidAt.toISOString() : null,
     failureReason: order.failureReason,
     createdAt: order.createdAt.toISOString(),
+    /**
+     * The address as it was at checkout, not as it is now. Null on orders
+     * placed before addresses existed.
+     */
+    shipTo: order.shipToLine1
+      ? {
+          fullName: order.shipToName,
+          line1: order.shipToLine1,
+          line2: order.shipToLine2,
+          city: order.shipToCity,
+          region: order.shipToRegion,
+          postcode: order.shipToPostcode,
+          country: order.shipToCountry,
+          phone: order.shipToPhone,
+        }
+      : null,
     items: order.items.map((item) => ({
       id: item.id,
       title: item.title,
@@ -53,6 +70,13 @@ function serialize(order: Awaited<ReturnType<typeof getOrder>>) {
       sellerName: item.sellerName,
       slug: item.listing?.slug ?? null,
       image: item.listing?.images[0]?.url ?? null,
+      // Per line, because a basket can span sellers and they ship separately.
+      fulfilment: item.fulfilment,
+      shippedAt: item.shippedAt ? item.shippedAt.toISOString() : null,
+      deliveredAt: item.deliveredAt ? item.deliveredAt.toISOString() : null,
+      carrier: item.carrier,
+      trackingNumber: item.trackingNumber,
+      fulfilmentNote: item.fulfilmentNote,
     })),
   };
 }
@@ -114,9 +138,21 @@ ordersRouter.get("/:id", async (req, res) => {
  * intent for it. The stock is already committed by the holds, so nobody can
  * be told their item is gone after paying for it.
  */
+const checkoutBody = z.object({
+  /** Omitted means "use my default", which is what the cart button does. */
+  addressId: z.string().uuid().optional(),
+});
+
 ordersRouter.post("/", async (req, res) => {
   try {
-    const order = await createOrderFromHolds(req.userId!);
+    const parsed = checkoutBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: "Pick a delivery address.", code: "INVALID_INPUT", field: "addressId" });
+    }
+
+    const order = await createOrderFromHolds(req.userId!, parsed.data.addressId);
 
     const intent = await createIntent({
       amountCents: order.subtotalCents,
@@ -275,6 +311,25 @@ ordersRouter.post("/:id/pay", async (req, res) => {
       }
     }
     fail(res, err, "Could not complete that payment.");
+  }
+});
+
+/**
+ * The buyer confirms an item arrived.
+ *
+ * Deliberately the buyer's action, not the seller's: a seller marking their own
+ * parcel delivered is not evidence of anything, and once payouts exist this
+ * confirmation is what releasing money would hang on.
+ */
+ordersRouter.post("/items/:itemId/delivered", async (req, res) => {
+  try {
+    await markDelivered(req.userId!, req.params.itemId);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof SalesError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    fail(res, err, "Could not confirm that delivery.");
   }
 });
 

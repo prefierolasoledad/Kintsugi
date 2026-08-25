@@ -25,6 +25,25 @@ export type OrderItem = {
   sellerName: string;
   slug: string | null;
   image: string | null;
+  /** Per line, because a basket can span sellers and they ship separately. */
+  fulfilment: "UNFULFILLED" | "SHIPPED" | "DELIVERED" | "UNFULFILLABLE";
+  shippedAt: string | null;
+  deliveredAt: string | null;
+  carrier: string | null;
+  trackingNumber: string | null;
+  fulfilmentNote: string | null;
+};
+
+/** The address as it was at checkout — a copy, not a link to the address book. */
+export type ShipTo = {
+  fullName: string | null;
+  line1: string;
+  line2: string | null;
+  city: string | null;
+  region: string | null;
+  postcode: string | null;
+  country: string | null;
+  phone: string | null;
 };
 
 export type Order = {
@@ -40,6 +59,7 @@ export type Order = {
   paidAt: string | null;
   failureReason: string | null;
   createdAt: string;
+  shipTo: ShipTo | null;
   items: OrderItem[];
 };
 
@@ -72,6 +92,11 @@ export function getMyOrders() {
 
 export function getOrder(orderId: string) {
   return request<{ order: Order }>(`/${orderId}`);
+}
+
+/** The buyer confirms an item arrived. Deliberately not the seller's call. */
+export function confirmDelivery(orderItemId: string) {
+  return request<{ ok: true }>(`/items/${orderItemId}/delivered`, { method: "POST" });
 }
 
 /** Converts the buyer's live holds into an order and opens a payment for it. */

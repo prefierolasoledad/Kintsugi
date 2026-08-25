@@ -19,6 +19,18 @@ import type { Suite } from "./harness";
 
 export const PASSWORD = "correct horse battery staple 9";
 
+/** Every test buyer gets one of these, because checkout requires an address. */
+export const DEFAULT_ADDRESS = {
+  fullName: "Test Buyer",
+  line1: "12 Kiln Lane",
+  line2: "Flat 3",
+  city: "Bristol",
+  region: "Avon",
+  postcode: "BS1 4TR",
+  country: "GB",
+  phone: "+44 7700 900123",
+} as const;
+
 /** Reserved so cleanup can never match a real account. */
 const PREFIX = "kt.";
 const DOMAIN = "@kintsugi.test";
@@ -63,6 +75,10 @@ export class Scope {
     if (login.status !== 200) {
       throw new Error(`could not log in ${email}: ${login.status} ${login.text.slice(0, 120)}`);
     }
+
+    // Checkout needs a delivery address, so every test buyer gets one. Suites
+    // that care about the address itself create their own and override it.
+    await client.post("/api/addresses", DEFAULT_ADDRESS);
     return client;
   }
 
@@ -72,7 +88,10 @@ export class Scope {
    * For browser suites: they log in through the real form, so an API session
    * here would be a second, unrelated one.
    */
-  async register(name = "one", opts: { seller?: boolean } = {}): Promise<string> {
+  async register(
+    name = "one",
+    opts: { seller?: boolean; withAddress?: boolean } = {}
+  ): Promise<string> {
     const email = `${PREFIX}${this.tag}.${name}${DOMAIN}`;
     this.emails.add(email);
 
@@ -84,12 +103,23 @@ export class Scope {
       data: { emailVerified: true, ...(opts.seller ? { isSeller: true } : {}) },
     });
 
+    // A throwaway session for the setup that has to go through the API.
+    const setup = web();
+    await setup.post("/api/auth/login", { email, password: PASSWORD });
+
     if (opts.seller) {
       // become-seller creates the SellerProfile, which the isSeller flag alone
       // does not — several seller endpoints 404 without it.
-      const signedIn = web();
-      await signedIn.post("/api/auth/login", { email, password: PASSWORD });
-      await signedIn.post("/api/auth/become-seller");
+      await setup.post("/api/auth/become-seller");
+    }
+
+    /**
+     * Checkout requires an address, so give every account one by default.
+     * Suites testing the no-address path pass `withAddress: false` — which is
+     * the only reason this is a flag rather than unconditional.
+     */
+    if (opts.withAddress !== false) {
+      await setup.post("/api/addresses", DEFAULT_ADDRESS);
     }
     return email;
   }

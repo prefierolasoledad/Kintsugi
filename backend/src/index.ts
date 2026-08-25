@@ -12,8 +12,10 @@ import { assertKycConfigured } from "./lib/kycProvider";
 import { assertProviderConfigured } from "./lib/paymentProvider";
 import { startReservationSweeper } from "./lib/reservations";
 import { ordersRouter } from "./routes/orders";
+import { addressesRouter } from "./routes/addresses";
 import { reservationsRouter } from "./routes/reservations";
 import { reviewsRouter } from "./routes/reviews";
+import { salesRouter } from "./routes/sales";
 import { sellerVerificationRouter } from "./routes/sellerVerification";
 import { webhooksRouter } from "./routes/webhooks";
 import { wishlistRouter } from "./routes/wishlist";
@@ -64,9 +66,12 @@ app.use("/reservations", reservationsRouter);
 app.use("/orders", ordersRouter);
 app.use("/wishlist", wishlistRouter);
 app.use("/reviews", reviewsRouter);
-// Verification is mounted first so its routes aren't shadowed by the listing
-// router's own paths.
+app.use("/addresses", addressesRouter);
+// Verification and sales are mounted before the listing router so their paths
+// aren't shadowed by its own — `/seller/listings/:id` would otherwise swallow
+// anything it pattern-matches.
 app.use("/seller", sellerVerificationRouter);
+app.use("/seller", salesRouter);
 app.use("/seller", sellerRouter);
 
 /**

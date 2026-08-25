@@ -131,12 +131,22 @@ export default function SellerDashboard() {
                 </p>
               )}
             </div>
-            <Link
-              href="/seller/listings/new"
-              className="rounded-full bg-gold-dim px-5 py-2.5 text-sm font-semibold text-paper transition hover:brightness-90"
-            >
-              List an item
-            </Link>
+            <div className="flex flex-wrap gap-3">
+              {/* A seller with an unsent parcel needs to find this from the
+                  page they already live on, not from the account menu. */}
+              <Link
+                href="/seller/sales"
+                className="rounded-full border border-line px-5 py-2.5 text-sm font-medium text-ink transition hover:border-gold/40"
+              >
+                Sales
+              </Link>
+              <Link
+                href="/seller/listings/new"
+                className="rounded-full bg-gold-dim px-5 py-2.5 text-sm font-semibold text-paper transition hover:brightness-90"
+              >
+                List an item
+              </Link>
+            </div>
           </div>
 
           {error && (

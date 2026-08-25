@@ -463,6 +463,177 @@ moved.
 
 ---
 
+## Addresses — `/addresses` 🔒
+
+Where orders get delivered. Checkout requires one.
+
+Deleted entries are soft-deleted, and **past orders never reference these rows at
+all** — an order copies the fields onto itself at checkout. Editing or deleting
+an address must not change where a past parcel was sent.
+
+### `GET /addresses`
+Your addresses, default first then newest.
+
+### `POST /addresses`
+```json
+{ "fullName": "…", "line1": "…", "line2": null, "city": "…",
+  "region": null, "postcode": "…", "country": "GB", "phone": null,
+  "isDefault": false }
+```
+`country` is ISO 3166-1 alpha-2. Everything else is deliberately loose —
+address formats differ enough between countries that strict validation rejects
+more real addresses than it catches bad ones.
+
+The **first** address saved becomes the default whether or not `isDefault` was
+sent, so checkout always has something to preselect.
+
+`409 TOO_MANY` past 20 addresses.
+
+### `PATCH /addresses/:id` · `DELETE /addresses/:id`
+Scoped to the owner; someone else's address is a **404, not a 403**.
+Deleting the default promotes the next most recent, rather than leaving a buyer
+with addresses but no default.
+
+### `POST /addresses/:id/default`
+Exactly one default at a time, swapped inside a transaction.
+
+---
+
+## Orders — `/orders` 🔒
+
+→ [ADR 0013](adr/0013-payment-provider-seam.md)
+
+### `POST /orders`
+Converts live holds into an order and opens a payment intent.
+
+```json
+{ "addressId": "uuid" }   // optional — omitted means "use my default"
+```
+
+`400 NO_ADDRESS` if the buyer has none. The UI treats this as a missing step and
+routes to the address form rather than showing an error.
+
+The response order carries `shipTo` — the address **as it was that day**.
+
+### `GET /orders` · `GET /orders/:id`
+Scoped to the buyer. Someone else's order is a 404.
+
+Each item carries its own `fulfilment`, `carrier`, `trackingNumber`,
+`shippedAt`, `deliveredAt`, and `fulfilmentNote`. Fulfilment is per line because
+a basket can span several sellers, and two sellers cannot share one parcel —
+so "your order has shipped" is not something that can honestly be said about a
+whole order.
+
+### `POST /orders/:id/pay`
+```json
+{ "cardNumber": "4242424242424242" }
+```
+Claims the order atomically before contacting the provider. Concurrent calls get
+`409 PAYMENT_IN_PROGRESS` or `409 ALREADY_PAID` — never a second charge.
+
+### `POST /orders/:id/cancel`
+Only while `PENDING_PAYMENT`. A `PROCESSING` order returns
+`409 PAYMENT_IN_PROGRESS`, because returning stock while a charge may complete
+risks selling an item someone has paid for.
+
+### `POST /orders/items/:itemId/delivered`
+The **buyer** confirms arrival. Deliberately not the seller's call: a seller
+marking their own parcel delivered is not evidence of anything, and once payouts
+exist this confirmation is what releasing money would hang on. Idempotent.
+
+---
+
+## Sales — `/seller/sales` 🔒🏪
+
+What a seller has sold. Previously impossible to ask: order lines carried a
+`sellerName` *string* and nothing queryable, so a seller could never see their
+own orders.
+
+### `GET /seller/sales?filter=all|to_send|sent`
+
+Only `PAID` orders appear. An unpaid checkout is never shown — sellers should
+not pack parcels for carts that get abandoned, and the buyer's address is
+released at the same moment, not before.
+
+```json
+{ "sales": [ { "id": "…", "title": "…", "order": { "reference": "KIN-…" },
+              "fulfilment": "UNFULFILLED", "shipTo": { "line1": "…" } } ],
+  "summary": { "toSend": 1, "shipped": 0, "delivered": 0, "grossCents": 4200 } }
+```
+
+`grossCents` is named gross on purpose: there is no payout pipeline, so calling
+it earnings would imply money is waiting somewhere.
+
+### `POST /seller/sales/:id/ship`
+```json
+{ "carrier": "Royal Mail", "trackingNumber": "RM…" }
+```
+Both optional — plenty of secondhand sales are handed over in person or posted
+without a trackable service, and demanding a number pushes sellers into
+inventing one. Idempotent: shipping twice updates the tracking rather than
+erroring.
+
+### `POST /seller/sales/:id/cannot-send`
+```json
+{ "reason": "Broke while I was packing it, sorry." }
+```
+Returns `refundOwed: true`. **Nothing is refunded** — refunds are not built. The
+buyer has paid for something they will not receive, and the flag exists so the
+UI says so rather than implying the matter is settled.
+
+---
+
+## Wishlist — `/wishlist` 🔒
+
+Saving is **inert**: it never reserves, hides, or changes what anyone else sees.
+Two people can save the same one-of-a-kind chair and neither has claimed it.
+
+- `GET /wishlist` — full entries. Sold items stay on the list, flagged `sold`,
+  rather than vanishing.
+- `GET /wishlist/ids` — ids only, for drawing a grid of hearts in one request.
+- `PUT /wishlist/:listingId` — idempotent, via a unique index on
+  `(userId, listingId)`. Six simultaneous saves produce one row.
+- `DELETE /wishlist/:listingId` — removing something not saved is a success, not
+  a 404.
+
+---
+
+## Reviews — `/reviews` 🔒
+
+A review requires a **PAID order for that listing**. An open review box on a
+marketplace is a reputation weapon — competitors bury each other, sellers
+inflate themselves, and the stars that gate every buying decision stop meaning
+anything.
+
+- `GET /reviews/for/:listingId` — `{ canReview, code, reason, mine }`.
+  `code` is `OK`, `NOT_PURCHASED`, `OWN_LISTING`, or `GONE`. Ownership is
+  checked **before** purchase, so a seller is told they own it rather than being
+  sent off to buy their own item.
+- `POST /reviews` — `{ listingId, rating, body }`. An upsert: writing again
+  edits the existing review. One per person per listing, by unique index.
+- `PATCH /reviews/:id` · `DELETE /reviews/:id` — author only; 404 otherwise.
+
+`GET /catalog/listings/:slug` returns `ratingBreakdown` and a per-review
+`verified` flag. That flag is **computed against real paid orders**, not
+assumed — seeded reviews have no order behind them, and a badge that isn't
+earned devalues every badge on the site.
+
+---
+
+## Webhooks — `/webhooks/stripe`
+
+Signature-verified, raw body, mounted **before** `express.json()` — Stripe signs
+the exact bytes, so a parsed and re-serialised body fails every time.
+
+Handles `payment_intent.*` and `identity.verification_session.*`. Note that
+`requires_input` means both "hasn't started" and "was refused"; only
+`last_error` separates them.
+
+Unknown events and unknown ids return **200**, because a non-2xx tells Stripe to
+retry forever.
+
+---
+
 ## Static files
 
 ### `GET /uploads/:key`

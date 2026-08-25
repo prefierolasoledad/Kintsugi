@@ -93,6 +93,32 @@ else: a decline reason printed twice, and a "Verified purchase" badge on 1,792
 reviews nobody had paid for. Both had passing text assertions over them.
 Screenshots land in `tests/screenshots/` (gitignored).
 
+## Slow environment looks exactly like test failure
+
+The Next **dev** server is expensive here: measured at **1.1 GB and ~1.6s to
+serve a warm `/search`** on a freshly started process, with a 900-listing
+catalog. That is the floor, not degradation — it does get worse under sustained
+load, but it starts slow.
+
+That matters because a browser suite does twenty-odd navigations. One full run
+took **1162s instead of 447s** and reported four failures; every one of them
+passed when its suite was re-run alone, minutes later, against identical code.
+The failures were `waitFor` timeouts and a hydration warning — both symptoms of
+a struggling server, neither a code bug.
+
+So: **if a browser suite fails, re-run it alone before believing it.** If it
+passes alone, the environment failed, not the code.
+
+The runner measures `/search` before starting and warns when the median exceeds
+1500ms. It warns rather than refusing, because slow is not broken.
+
+A production build (`cd frontend && npm run build && npm start`) is far faster
+and worth using for a full run — with one caveat worth knowing: it sets
+`NODE_ENV=production`, which turns off `dangerouslyAllowLocalIP` in
+`next.config.ts`. Seller-uploaded photos served from `localhost:4000/uploads`
+stop being optimised. Seeded listings use Unsplash and are unaffected, so most
+suites do not notice, but a suite asserting on an uploaded image would.
+
 ## Slow suites
 
 Two suites wait on real timers rather than faking them, because the timers are

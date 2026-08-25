@@ -25,6 +25,7 @@ const SUITES: Suite[] = [
   { name: "wishlist", file: "api/wishlist.ts", kind: "api" },
   { name: "reviews", file: "api/reviews.ts", kind: "api" },
   { name: "checkout-bff", file: "api/checkout-bff.ts", kind: "api" },
+  { name: "addresses-sales", file: "api/addresses-and-sales.ts", kind: "api" },
   { name: "identity", file: "api/identity.ts", kind: "api" },
   { name: "identity-stale", file: "api/identity-stale-session.ts", kind: "api" },
   // Waits ~60s for the reconciliation sweeper.
@@ -32,6 +33,7 @@ const SUITES: Suite[] = [
 
   { name: "browser-catalog", file: "browser/catalog.ts", kind: "browser" },
   { name: "browser-checkout", file: "browser/checkout.ts", kind: "browser" },
+  { name: "browser-fulfilment", file: "browser/fulfilment.ts", kind: "browser" },
   { name: "browser-wishlist", file: "browser/wishlist.ts", kind: "browser" },
   { name: "browser-reviews", file: "browser/reviews.ts", kind: "browser" },
   { name: "browser-identity", file: "browser/identity.ts", kind: "browser" },
@@ -95,6 +97,44 @@ async function preflight() {
     for (const p of problems) console.error(`  - ${p}`);
     console.error("\nThese are end-to-end tests; they drive the real stack.\n");
     process.exit(2);
+  }
+
+  await warnIfSlow();
+}
+
+/**
+ * Warns when the frontend is already slow before a single test has run.
+ *
+ * A Next dev server that has been up for hours accumulates compilation state —
+ * it has been observed at 1.3 GB serving warm pages in five seconds. Under that,
+ * browser suites fail on `waitFor` timeouts and hydration warnings that have
+ * nothing to do with the code, and a whole run took 2.6x its usual time before
+ * anyone noticed why.
+ *
+ * A confusing mid-run failure becomes one sentence up front. Deliberately a
+ * warning rather than a hard stop: slow is not broken, and refusing to run would
+ * be worse than running slowly.
+ */
+async function warnIfSlow() {
+  const samples: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    const started = Date.now();
+    try {
+      await fetch(`${WEB}/search`, { signal: AbortSignal.timeout(30_000) });
+      samples.push(Date.now() - started);
+    } catch {
+      samples.push(30_000);
+    }
+  }
+  const median = samples.sort((a, b) => a - b)[1];
+
+  if (median > 1500) {
+    console.warn(
+      `\n  Frontend is slow: ${median}ms to serve /search (warm).\n` +
+        "  Browser suites may fail on timeouts that are not code bugs.\n" +
+        "  Restart the frontend dev server, or run against a production build:\n" +
+        "    cd frontend && npm run build && npm start\n"
+    );
   }
 }
 

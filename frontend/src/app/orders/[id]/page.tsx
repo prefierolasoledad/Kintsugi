@@ -7,6 +7,7 @@ import Footer from "@/components/Footer";
 import Nav from "@/components/Nav";
 import OrderLines from "@/components/OrderLines";
 import OrderStatusPill from "@/components/OrderStatusPill";
+import ShipToCard from "@/components/ShipToCard";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import { formatPrice } from "@/lib/catalog";
@@ -105,8 +106,14 @@ export default function OrderPage() {
         </p>
       )}
 
+      {paid && (
+        <div className="mt-8">
+          <ShipToCard shipTo={order.shipTo} title="Delivered to" />
+        </div>
+      )}
+
       <div className="mt-8 rounded-2xl border border-line bg-paper-card p-6">
-        <OrderLines order={order} />
+        <OrderLines order={order} onChanged={load} />
 
         <div className="mt-6 flex items-baseline justify-between border-t border-line pt-5">
           <span className="text-sm text-ink-dim">
