@@ -22,6 +22,10 @@ backend/src/generated/
 # seller-uploaded images (local dev storage; object storage in production)
 backend/uploads/
 
+# Screenshots the browser suites take on every run. Useful while debugging a
+# failure, not something to keep in history.
+backend/tests/screenshots/
+
 # AI coding-tool config and the vendored reference docs they install. Local
 # tooling rather than project code, and not ours to redistribute under this
 # repository's license.

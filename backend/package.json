@@ -9,6 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "seed:scale": "tsx prisma/seed-scale.ts",
+    "test": "tsx tests/run.ts",
+    "test:api": "tsx tests/run.ts api",
+    "test:browser": "tsx tests/run.ts browser",
     "test:payments": "tsx tests/payment-safety.ts",
     "lint": "eslint ."
   },
@@ -36,6 +39,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^20.14.9",
     "@types/pg": "^8.23.1",
+    "playwright": "^1.62.1",
     "prisma": "^7.9.1",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3"

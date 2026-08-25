@@ -65,19 +65,105 @@ function unsplash(id: string, params = "w=1600&q=80&auto=format&fit=crop") {
 }
 
 /**
- * Every id here is already used by the main seed, which means each was checked
- * to return a real image from images.unsplash.com rather than Unsplash+.
- * Photos repeat across the 900 — that is the honest cost of generated data, and
- * better than shipping unverified ids or broken links.
+ * 205 Unsplash photo ids, grouped by the category they were searched for.
+ *
+ * EVERY ONE WAS FETCHED AND CHECKED before being written here: HTTP 200, an
+ * image content-type, and a final host of images.unsplash.com. That last check
+ * matters — Unsplash+ ids redirect to plus.unsplash.com, which is licensed
+ * separately and not ours to ship. 205 candidates were tested and 205 passed.
+ *
+ * Ids are globally unique across categories, so no photo appears under two
+ * headings. With ~130 listings per category and ~29 photos each, a given photo
+ * repeats about four times instead of the thirty-odd it did when this list held
+ * 28 ids in total.
+ *
+ * Repetition is the honest cost of generated data. The alternative is inventing
+ * ids, and an invented id is a 404.
  */
 const PHOTOS: Record<string, string[]> = {
-  "furniture-home": ["1758380742318-4074cce52ec4", "1718049719688-764249c6800d", "1551806406-553417833005"],
-  "clothing-accessories": ["1637228393246-c38a4b3d2011", "1623854156816-4c4fc355ffc7", "1602082805057-3c32f79817a1", "1616244916660-d135a013d1f8"],
-  "music-film-books": ["1760302318625-cbe999965d8a", "1766592946837-ab4454c4a8a3", "1755621019856-a22fe8db1292", "1616146649085-a11fb216f170", "1611001716885-b3402558a62b"],
-  "decor-curiosities": ["1767338718786-92f7934e925e", "1622021134395-d26aab83c221", "1550777006-9ee6c430227d", "1465385076216-9288f6f0584b", "1525598912003-663126343e1f"],
-  "bikes-outdoors": ["1743087177786-c580de98fbd8", "1684487747385-442d674962f2", "1509762774605-f07235a08f1f", "1711118882380-085ab7f04f92"],
-  "kitchen-tableware": ["1560131324-71022d71ee4f", "1577930143935-a9489e4f34ec", "1716757025967-5548360464b4", "1551497406-3e4e11919f7a"],
-  electronics: ["1741555165521-4c9e762fb2e8", "1756622584764-94eaa382652e", "1611001716885-b3402558a62b", "1525598912003-663126343e1f"],
+  "furniture-home": [
+    "1577176434922-803273eba97a", "1460776960860-7adc30a4e69d", "1544691560-fc2053d97726",
+    "1600620195943-eb20d00a556f", "1569424746512-4f98ac866469", "1624347443725-dac2bcc04c82",
+    "1715249892549-8dbafc328b18", "1588296401836-21d1fbcafd5b", "1591291608932-8bab6b55204c",
+    "1689280730533-4fdacc46e6c4", "1715249891485-4b8e66b584dc", "1560295888-44704dea4ea7",
+    "1605665497157-8b40497be469", "1566097127420-26750d93591e", "1648657458755-74ceaf075f18",
+    "1598300042247-d088f8ab3a91", "1506439773649-6e0eb8cfb237", "1612372606404-0ab33e7187ee",
+    "1581539250439-c96689b516dd", "1650476524564-f94dc9669067", "1487015307662-6ce6210680f1",
+    "1640938776314-4d303f8a1380", "1634712282287-14ed57b9cc89", "1699588772787-1eed3b726e0a",
+    "1634798245965-03669c757183", "1638285852125-c6ed00ff2065", "1624985113578-3b6af96e5eed",
+    "1507878866276-a947ef722fee", "1622880355742-af182a61b362", "1656870916547-9e6a8a17f6e7",
+  ],
+  "clothing-accessories": [
+    "1551028719-00167b16eac5", "1521223890158-f9f7c3d5d504", "1727515546577-f7d82a47b51d",
+    "1623854156816-4c4fc355ffc7", "1727524366429-27de8607d5f6", "1602370463198-086436840055",
+    "1553640662-9ab20b8fa2ea", "1489286696299-aa7486820bd5", "1511280303142-0051e93baeeb",
+    "1559551409-dadc959f76b8", "1592158249887-ac6ae7921691", "1647960514922-052047430407",
+    "1578198576866-7e0ba6078128", "1596832772762-78e213deff5f", "1700168077358-692db90c8b7f",
+    "1520006403909-838d6b92c22e", "1614990354198-b06764dcb13c", "1647664856968-880b8eccd588",
+    "1617331721458-bd3bd3f9c7f8", "1634133118553-1e6e18299886", "1453486030486-0a5ffcd82cd9",
+    "1630797160982-553facf1c3cc", "1445205170230-053b83016050", "1666861585341-5bd1e7b1ed71",
+    "1634133118060-99de9d0dc039", "1680362667647-c2a8c6994742", "1569909265601-2110fe50a54f",
+    "1540221652346-e5dd6b50f3e7", "1600269453043-e8776c7f2595",
+  ],
+  "music-film-books": [
+    "1602848597941-0d3d3a2c1241", "1616714109948-c74fe5029a4d", "1580656449278-e8381933522c",
+    "1669801158950-f663cf15298c", "1603048588665-791ca8aea617", "1526394931762-90052e97b376",
+    "1582730147924-d92f4da00252", "1596633313465-1256feb1c6d9", "1483412033650-1015ddeb83d1",
+    "1619983081563-430f63602796", "1488841714725-bb4c32d1ac94", "1535992165812-68d1861aa71e",
+    "1672073314527-cd2d83182992", "1496293455970-f8581aae0e3b", "1588532218970-c2cab983746a",
+    "1457369804613-52c61a468e7d", "1550399105-c4db5fb85c18", "1600181982553-ce7d36051c01",
+    "1491841573634-28140fc7ced7", "1556566952-11eff3d06ed4", "1529590003495-b2646e2718bf",
+    "1521587760476-6c12a4b040da", "1595123550441-d377e017de6a", "1534289855405-ab820a118fc1",
+    "1491841651911-c44c30c34548", "1613324766451-2d03b2ea8190", "1550399105-05c4a7641b02",
+    "1515325595179-59cd5262ca53", "1625053376622-e462848c453f", "1719563015025-83946fb49e49",
+  ],
+  "decor-curiosities": [
+    "1606241018160-4985a8ab5dec", "1652598631616-3f5f4d2cfbd5", "1633101635884-93a9992960fa",
+    "1739483213555-6b94115feab8", "1758380742318-4074cce52ec4", "1739134472894-16f657cb1aff",
+    "1739134471861-d56aac3b0e87", "1672939716738-2070a8382a1f", "1620207745017-3e9ef8cd2a1b",
+    "1784022163259-543a172ac3ee", "1765000884263-0bf0a2232b5f", "1678705544977-0d0b86a8b5f9",
+    "1631125915902-d8abe9225ff2", "1597696929736-6d13bed8e6a8", "1660721671073-e139688fa3cf",
+    "1612196808214-b8e1d6145a8c", "1677761640321-b80251be00ca", "1631125915732-b98f8774f675",
+    "1643569556871-91ec60671ed7", "1481401908818-600b7a676c0d", "1631125915973-e0d155a14e4e",
+    "1526198049595-f32cde2a219d", "1526198330131-9b0bc79625e4", "1631125916276-69bcd14e3980",
+    "1687191883721-257d8cad5b54", "1633000116322-d7f5cb7d3ebb", "1705526966290-2de7b8a33f03",
+  ],
+  "bikes-outdoors": [
+    "1523740856324-f2ce89135981", "1578509557315-37510239a203", "1625656006822-0f81e8380331",
+    "1570169043013-de63774bbf97", "1592614558340-8095660384f6", "1495570042983-249df576ad3c",
+    "1739783267575-d7ed597e84e0", "1588766919876-f2ad05ff92f5", "1663427768578-aa88be42bf56",
+    "1631443412966-2a2ab5e18c3b", "1705329353595-d79fa4241cba", "1521218462742-5cc9d586f913",
+    "1786882693307-aa8ecf693fe6", "1782851938244-7b632c31bd61", "1502913625325-725506829ddc",
+    "1504280390367-361c6d9f38f4", "1576176539998-0237d1ac6a85", "1537905569824-f89f14cceb68",
+    "1525811902-f2342640856e", "1532339142463-fd0a8979791a", "1571863533956-01c88e79957e",
+    "1625834509314-3b12c6153624", "1508873696983-2dfd5898f08b", "1492648272180-61e45a8d98a7",
+    "1624923686627-514dd5e57bae", "1471115853179-bb1d604434e0", "1534880606858-29b0e8a24e8d",
+    "1625013964767-0e4b3c041607", "1621519994490-b87b9401599e", "1493244040629-496f6d136cc4",
+  ],
+  "kitchen-tableware": [
+    "1523039031846-6b3f39302cb8", "1715249891396-653a32ff2d39", "1627362139686-2dc7fef67dd1",
+    "1466027575040-12134f1397fa", "1760720061928-703533ae9c24", "1673598001134-d8c86ab6f408",
+    "1771179231923-3d63f348e5df", "1784466505252-2f55029ad682", "1673598004024-1a8fb802a44e",
+    "1775613501006-51dc1c0861c9", "1782758896098-11cf364d6ba3", "1777499455332-ec8800b7c197",
+    "1777499455349-724b6605d0af", "1770924673879-781860ce03f1", "1780246031877-9bfe3be0a5b7",
+    "1571987530791-58e3e7744d99", "1591632288574-a387f820a1ca", "1633856858940-42229cb53dd3",
+    "1551807306-4bcd16b92a41", "1612293905838-667dea27cc79", "1705948731485-6e4c6c180d0d",
+    "1605883705077-8d3d3cebe78c", "1614548539644-ef528186523a", "1484632105053-8662f3194e7f",
+    "1624819107687-15524ecf555a", "1632996547863-828cf385e4cf", "1670843840695-be4ce9626145",
+    "1610300034180-d55d519ca946", "1620818309896-df4306ec95d8", "1534273006427-1686266049b7",
+  ],
+  electronics: [
+    "1510127034890-ba27508e9f1c", "1495121553079-4c61bcce1894", "1516961642265-531546e84af2",
+    "1603208234872-619ffa1209cb", "1520549233664-03f65c1d1327", "1595401735913-4ca17c66e755",
+    "1516852294404-5423eaa0d4a9", "1452587925148-ce544e77e70d", "1516962126636-27ad087061cc",
+    "1601854266103-c1dd42130633", "1524135220673-c731600a1a50", "1528594498426-ea65fdafcbf4",
+    "1543785832-0781599790c2", "1481923387198-050ac1a2896e", "1512390225428-a9d51c817f94",
+    "1633294666093-ab54f43a947a", "1517408395525-fa05dd0bb2ef", "1623969451926-10c5e52b707a",
+    "1584541728894-dbcae08f94ac", "1573154622954-b5fae2c1eed8", "1588523900549-d60e602ced7c",
+    "1683189400209-a076d6c375b8", "1593078166039-c9878df5c520", "1564386377355-e6738e1df113",
+    "1606422360319-c1512f54d1b9", "1623990670975-d294abcb659b", "1576360956491-858d2702cfbd",
+    "1487180144351-b8472da7d491", "1612869544295-eda1013274aa",
+  ],
 };
 
 /** Titles are assembled rather than listed, because 900 hand-written ones is
@@ -294,6 +380,15 @@ async function seed() {
   };
 
   const rows: Row[] = [];
+  /**
+   * Per-category round-robin, so photos spread evenly.
+   *
+   * The previous `(s + k) % photos.length` clustered badly: which category a
+   * listing lands in is itself a function of s and k, so the two indices moved
+   * together and the same few photos kept coming up. A plain counter per
+   * category cannot do that.
+   */
+  const photoCursor: Record<string, number> = {};
 
   for (let s = 0; s < SELLERS; s++) {
     for (let k = 0; k < LISTINGS_PER_SELLER; k++) {
@@ -315,7 +410,8 @@ async function seed() {
         : null;
 
       const photos = PHOTOS[catSlug];
-      const photo = photos[(s + k) % photos.length];
+      photoCursor[catSlug] = (photoCursor[catSlug] ?? 0) + 1;
+      const photo = photos[photoCursor[catSlug] % photos.length];
 
       rows.push({
         // Slug carries the seller and item index, so two sellers can both list
@@ -368,25 +464,32 @@ async function seed() {
   });
   const idBySlug = new Map(created.map((l) => [l.slug, l.id]));
 
-  const withImages = new Set(
-    (
-      await prisma.listingImage.findMany({
-        where: { listingId: { in: created.map((l) => l.id) } },
-        select: { listingId: true },
-        distinct: ["listingId"],
-      })
-    ).map((r) => r.listingId)
-  );
+  /**
+   * Replaced rather than skipped-if-present.
+   *
+   * Re-running is how the photo set gets refreshed after the pool grows, so
+   * "already has an image" must not mean "leave the old one alone" — that made
+   * the seeder unable to fix the very thing it was re-run to fix.
+   */
+  const listingIds = created.map((l) => l.id);
+  for (let i = 0; i < listingIds.length; i += CHUNK) {
+    await prisma.listingImage.deleteMany({
+      where: { listingId: { in: listingIds.slice(i, i + CHUNK) } },
+    });
+  }
 
   const imageRows = rows
     .map((r) => ({ listingId: idBySlug.get(r.slug)!, url: r.photo, alt: r.photoAlt, position: 0 }))
-    .filter((r) => r.listingId && !withImages.has(r.listingId));
+    .filter((r) => r.listingId);
 
   for (let i = 0; i < imageRows.length; i += CHUNK) {
     await prisma.listingImage.createMany({ data: imageRows.slice(i, i + CHUNK) });
     process.stdout.write(`  ${Math.min(i + CHUNK, imageRows.length)}/${imageRows.length}\r`);
   }
   console.log(`\n  attached ${imageRows.length} images`);
+
+  const distinctPhotos = new Set(imageRows.map((r) => r.url)).size;
+  console.log(`  ${distinctPhotos} distinct photos in use`);
 
   /* ---- reviews ---- */
   console.log("Adding reviews…");
