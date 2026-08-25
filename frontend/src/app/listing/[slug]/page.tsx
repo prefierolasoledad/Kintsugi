@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import Footer from "@/components/Footer";
 import ListingCard from "@/components/ListingCard";
+import ListingReviews from "@/components/ListingReviews";
 import Nav from "@/components/Nav";
 import ReserveButton from "@/components/ReserveButton";
 import StarRating from "@/components/StarRating";
@@ -161,44 +162,16 @@ export default async function ListingPage({
             </div>
           </div>
 
-          <section className="mt-16">
-            <h2 className="font-serif text-2xl font-medium tracking-tight text-ink">
-              Reviews{" "}
-              <span className="text-base font-normal text-ink-dim">
-                ({listing.rating.count})
-              </span>
-            </h2>
-
-            {listing.reviews.length === 0 ? (
-              <p className="mt-4 text-sm text-ink-dim">
-                Nobody has reviewed this one yet.
-              </p>
-            ) : (
-              <ul className="mt-6 grid gap-4 sm:grid-cols-2">
-                {listing.reviews.map((review) => (
-                  <li
-                    key={review.id}
-                    className="rounded-2xl border border-line bg-paper-card p-5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-ink">
-                        {review.authorName}
-                      </span>
-                      <span className="text-xs text-ink-dim">
-                        {formatDate(review.createdAt)}
-                      </span>
-                    </div>
-                    <div className="mt-2">
-                      <StarRating rating={review.rating} />
-                    </div>
-                    {review.body && (
-                      <p className="mt-3 text-sm text-ink-dim">{review.body}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          {/* The reviews are public and ship with the HTML; whether *you* may
+              write one depends on whether you bought it, which can't be baked
+              into a page served to everybody. Hence a client island. */}
+          <ListingReviews
+            listingId={listing.id}
+            initialReviews={listing.reviews}
+            average={listing.rating.average}
+            count={listing.rating.count}
+            breakdown={listing.ratingBreakdown}
+          />
 
           {related.length > 0 && (
             <section className="mt-16">

@@ -10,6 +10,7 @@ import StarRating from "@/components/StarRating";
 import { ApiError, getMyReviews, type MyReview } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import { formatPrice } from "@/lib/catalog";
+import { removeReview } from "@/lib/reviewsApi";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
@@ -25,6 +26,20 @@ export default function MyReviewsPage() {
 
   const [reviews, setReviews] = useState<MyReview[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function destroy(reviewId: string) {
+    setError(null);
+    setBusyId(reviewId);
+    try {
+      await removeReview(reviewId);
+      setReviews((current) => current?.filter((r) => r.id !== reviewId) ?? null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't delete that review.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
@@ -156,6 +171,26 @@ export default function MyReviewsPage() {
                       {formatDate(review.createdAt)}
                       {review.edited && " · edited"}
                     </p>
+
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      {/* Editing happens on the listing, next to the thing
+                          being reviewed — a rating written away from the item
+                          is a rating written from memory. */}
+                      <Link
+                        href={`/listing/${review.listing.slug}#reviews`}
+                        className="text-xs text-gold-dim underline"
+                      >
+                        Edit on the listing
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => destroy(review.id)}
+                        disabled={busyId === review.id}
+                        className="text-xs text-ink-dim underline transition hover:text-clay disabled:opacity-60"
+                      >
+                        {busyId === review.id ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
                   </div>
                 </li>
               ))}

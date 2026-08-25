@@ -13,6 +13,7 @@ import { assertProviderConfigured } from "./lib/paymentProvider";
 import { startReservationSweeper } from "./lib/reservations";
 import { ordersRouter } from "./routes/orders";
 import { reservationsRouter } from "./routes/reservations";
+import { reviewsRouter } from "./routes/reviews";
 import { sellerVerificationRouter } from "./routes/sellerVerification";
 import { webhooksRouter } from "./routes/webhooks";
 import { wishlistRouter } from "./routes/wishlist";
@@ -62,6 +63,7 @@ app.use("/profile", profileRouter);
 app.use("/reservations", reservationsRouter);
 app.use("/orders", ordersRouter);
 app.use("/wishlist", wishlistRouter);
+app.use("/reviews", reviewsRouter);
 // Verification is mounted first so its routes aren't shadowed by the listing
 // router's own paths.
 app.use("/seller", sellerVerificationRouter);

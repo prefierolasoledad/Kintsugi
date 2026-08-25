@@ -41,7 +41,12 @@ export type CatalogReview = {
   rating: number;
   body: string | null;
   createdAt: string;
+  edited: boolean;
+  /** So the viewer's own review can be marked and edited where it sits. */
+  authorId: string;
   authorName: string;
+  /** Backed by a real paid order. Computed server-side, never assumed. */
+  verified: boolean;
 };
 
 export type ListingPage = {
@@ -97,7 +102,14 @@ export async function getListings(query: ListingQuery = {}): Promise<ListingPage
 /** Returns null for 404 so callers can render notFound() rather than crash. */
 export async function getListing(
   slug: string
-): Promise<{ listing: CatalogListing & { reviews: CatalogReview[] }; related: CatalogListing[] } | null> {
+): Promise<{
+  listing: CatalogListing & {
+    reviews: CatalogReview[];
+    /** Star counts keyed "1".."5". An average alone hides the shape. */
+    ratingBreakdown: Record<string, number>;
+  };
+  related: CatalogListing[];
+} | null> {
   const res = await fetch(`${BACKEND_URL}/catalog/listings/${encodeURIComponent(slug)}`, {
     cache: "no-store",
   });

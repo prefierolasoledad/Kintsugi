@@ -32,10 +32,23 @@ export default function OrderLines({ order }: { order: Order }) {
             <p className="mt-1 text-xs text-ink-dim">from {item.sellerName}</p>
           </div>
 
-          <p className="text-sm text-ink-dim">
-            {formatPrice(item.unitPriceCents, order.currency)}
-            {item.quantity > 1 && ` × ${item.quantity}`}
-          </p>
+          <div className="text-right">
+            <p className="text-sm text-ink-dim">
+              {formatPrice(item.unitPriceCents, order.currency)}
+              {item.quantity > 1 && ` × ${item.quantity}`}
+            </p>
+            {/* Only on a paid order, because that is the only state in which
+                the API will accept a review — offering it sooner would be a
+                link that leads to a refusal. */}
+            {order.status === "PAID" && item.slug && (
+              <Link
+                href={`/listing/${item.slug}#reviews`}
+                className="mt-1 inline-block text-xs text-gold-dim underline"
+              >
+                Write a review
+              </Link>
+            )}
+          </div>
         </li>
       ))}
     </ul>

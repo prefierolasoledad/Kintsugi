@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { ratingBreakdown, verifiedBuyers } from "../lib/reviews";
 import { ListingStatus, VerificationStatus } from "../generated/prisma/enums";
 
 export const catalogRouter = Router();
@@ -245,6 +246,10 @@ catalogRouter.get("/listings/:slug", async (req, res) => {
             rating: true,
             body: true,
             createdAt: true,
+            updatedAt: true,
+            // Sent so the viewer's own review can be marked and made editable
+            // in place, rather than making them hunt for it in the account area.
+            authorId: true,
             author: { select: { name: true } },
           },
         },
@@ -256,6 +261,11 @@ catalogRouter.get("/listings/:slug", async (req, res) => {
     }
 
     const ratings = await ratingsFor([row.id]);
+    const breakdown = await ratingBreakdown(row.id);
+    const verifiedAuthors = await verifiedBuyers(
+      row.id,
+      row.reviews.map((r) => r.authorId)
+    );
 
     const related = await prisma.listing.findMany({
       where: { ...VISIBLE, categoryId: row.categoryId, id: { not: row.id } },
@@ -268,12 +278,28 @@ catalogRouter.get("/listings/:slug", async (req, res) => {
     res.json({
       listing: {
         ...serializeListing(row, ratings.get(row.id) ?? NO_RATING),
+        /**
+         * How the stars are distributed. An average hides the shape: 3.0 from
+         * twenty 3s and 3.0 from ten 5s and ten 1s are very different things
+         * to buy from, and on a secondhand marketplace that gap is most of the
+         * signal.
+         */
+        ratingBreakdown: breakdown,
         reviews: row.reviews.map((r) => ({
           id: r.id,
           rating: r.rating,
           body: r.body,
           createdAt: r.createdAt.toISOString(),
+          edited: r.updatedAt.getTime() - r.createdAt.getTime() > 1000,
+          authorId: r.authorId,
           authorName: r.author.name,
+          /**
+           * Computed against real paid orders rather than assumed. Reviews
+           * written through this API always qualify — it refuses otherwise —
+           * but seeded and imported rows do not, and a badge that isn't earned
+           * devalues every badge on the site.
+           */
+          verified: verifiedAuthors.has(r.authorId),
         })),
       },
       related: related.map((r) =>
