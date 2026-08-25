@@ -5,6 +5,7 @@ import Footer from "@/components/Footer";
 import ListingCard from "@/components/ListingCard";
 import ListingReviews from "@/components/ListingReviews";
 import Nav from "@/components/Nav";
+import ReportButton from "@/components/ReportButton";
 import ReserveButton from "@/components/ReserveButton";
 import StarRating from "@/components/StarRating";
 import WishlistButton from "@/components/WishlistButton";
@@ -159,6 +160,13 @@ export default async function ListingPage({
                 variant="full"
                 className="mt-3"
               />
+
+              {/* Understated on purpose: findable when needed, invisible the
+                  rest of the time. A prominent report button gets used as a
+                  disagreement button. */}
+              <div className="mt-5">
+                <ReportButton targetType="LISTING" targetId={listing.id} />
+              </div>
             </div>
           </div>
 

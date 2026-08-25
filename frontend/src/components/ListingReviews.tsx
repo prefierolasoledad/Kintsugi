@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import RatingBreakdown from "@/components/RatingBreakdown";
+import ReportButton from "@/components/ReportButton";
 import StarPicker from "@/components/StarPicker";
 import StarRating from "@/components/StarRating";
 import { ApiError } from "@/lib/api";
@@ -252,15 +253,25 @@ export default function ListingReviews({
 
                 {review.body && <p className="mt-3 text-sm text-ink-dim">{review.body}</p>}
 
-                {isMine && !open && (
-                  <button
-                    type="button"
-                    onClick={() => setOpen(true)}
-                    className="mt-3 text-xs text-gold-dim underline"
-                  >
-                    Edit
-                  </button>
-                )}
+                <div className="mt-3">
+                  {isMine && !open ? (
+                    <button
+                      type="button"
+                      onClick={() => setOpen(true)}
+                      className="text-xs text-gold-dim underline"
+                    >
+                      Edit
+                    </button>
+                  ) : !isMine ? (
+                    // Only on other people's. Reporting your own review is not
+                    // a thing anyone needs to do.
+                    <ReportButton
+                      targetType="REVIEW"
+                      targetId={review.id}
+                      label="Report this review"
+                    />
+                  ) : null}
+                </div>
               </li>
             );
           })}

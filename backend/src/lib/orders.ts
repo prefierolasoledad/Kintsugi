@@ -1,10 +1,12 @@
 import crypto from "crypto";
 import { prisma } from "./prisma";
 import { defaultAddress, getAddress, toOrderSnapshot } from "./addresses";
+import { notifyMany } from "./notifications";
 import { cancelIntent, getIntent } from "./paymentProvider";
 import { TX_OPTIONS, lockListing } from "./reservations";
 import {
   ListingStatus,
+  NotificationType,
   OrderStatus,
   ReservationStatus,
 } from "../generated/prisma/enums";
@@ -294,7 +296,14 @@ export async function unclaimOrder(orderId: string) {
 
 /** Payment succeeded: the listings are sold for good. */
 export async function markOrderPaid(orderId: string) {
-  return prisma.$transaction(async (tx) => {
+  /**
+   * The transaction reports whether it actually moved the order to PAID.
+   *
+   * That boolean is what keeps the notification idempotent: webhooks are
+   * delivered at least once, so this runs again for orders already paid, and
+   * a second "your item sold" would be indistinguishable from a second sale.
+   */
+  const transitioned = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findUniqueOrThrow({
       where: { id: orderId },
       select: { id: true, status: true, items: { select: { listingId: true }, orderBy: { listingId: "asc" } } },
@@ -303,7 +312,7 @@ export async function markOrderPaid(orderId: string) {
     // Idempotent: webhooks are delivered at least once, so this can legitimately
     // be called twice for the same payment. The second call must be a no-op
     // rather than a second round of side effects.
-    if (order.status === OrderStatus.PAID) return;
+    if (order.status === OrderStatus.PAID) return false;
     if (!STOCK_COMMITTED.includes(order.status)) {
       throw new OrderError("NOT_PAYABLE", "That order can no longer be paid.");
     }
@@ -339,7 +348,49 @@ export async function markOrderPaid(orderId: string) {
       where: { id: orderId },
       data: { status: OrderStatus.PAID, paidAt: new Date(), failureReason: null },
     });
+    return true;
   }, TX_OPTIONS);
+
+  /**
+   * Tell the sellers, AFTER the transaction commits, and only if this call is
+   * what actually paid the order.
+   *
+   * Outside the transaction because a notification failing must never roll back
+   * a payment. Guarded by `transitioned` because a redelivered webhook would
+   * otherwise send a second "your item sold", which is indistinguishable from a
+   * second sale.
+   */
+  if (transitioned) await notifySellersOfSale(orderId);
+}
+
+async function notifySellersOfSale(orderId: string) {
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        reference: true,
+        buyer: { select: { name: true } },
+        items: {
+          select: { title: true, seller: { select: { userId: true } } },
+        },
+      },
+    });
+    if (!order) return;
+
+    await notifyMany(
+      order.items
+        .filter((i) => i.seller?.userId)
+        .map((i) => ({
+          userId: i.seller!.userId,
+          type: NotificationType.SALE_MADE,
+          title: `${i.title} sold`,
+          body: `${order.buyer.name} bought it. Order ${order.reference} — send it when you can.`,
+          link: "/seller/sales",
+        }))
+    );
+  } catch (err) {
+    console.error(`Failed to notify sellers for order ${orderId}`, err);
+  }
 }
 
 /** Payment failed or the buyer walked away: give the stock back. */

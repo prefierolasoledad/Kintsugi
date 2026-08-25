@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { events } from "./notifications";
 import { FulfilmentStatus, OrderStatus } from "../generated/prisma/enums";
 
 /**
@@ -227,8 +228,19 @@ export async function markShipped(input: {
       trackingNumber: input.trackingNumber?.trim() || null,
       fulfilmentNote: null,
     },
-    select: saleSelect,
+    select: { ...saleSelect, order: { select: { ...saleSelect.order.select, buyerId: true } } },
   });
+
+  // Best-effort and after the write: telling the buyer must never be able to
+  // undo the shipment being recorded.
+  void events.orderShipped({
+    buyerUserId: updated.order.buyerId,
+    itemTitle: updated.title,
+    orderId: updated.order.id,
+    carrier: updated.carrier,
+    trackingNumber: updated.trackingNumber,
+  });
+
   return serialize(updated);
 }
 
@@ -245,7 +257,12 @@ export async function markDelivered(buyerId: string, orderItemId: string) {
       id: orderItemId,
       order: { buyerId, status: OrderStatus.PAID },
     },
-    select: { id: true, fulfilment: true },
+    select: {
+      id: true,
+      fulfilment: true,
+      title: true,
+      seller: { select: { userId: true } },
+    },
   });
   if (!line) throw new SalesError("NOT_FOUND", "Item not found.", 404);
 
@@ -258,6 +275,13 @@ export async function markDelivered(buyerId: string, orderItemId: string) {
     where: { id: line.id },
     data: { fulfilment: FulfilmentStatus.DELIVERED, deliveredAt: new Date() },
   });
+
+  if (line.seller?.userId) {
+    void events.orderDelivered({
+      sellerUserId: line.seller.userId,
+      itemTitle: line.title,
+    });
+  }
 }
 
 /** The seller cannot send it after all. */
@@ -268,7 +292,12 @@ export async function markUnfulfillable(input: {
 }) {
   const line = await prisma.orderItem.findFirst({
     where: { id: input.orderItemId, sellerId: input.sellerId, order: { status: OrderStatus.PAID } },
-    select: { id: true, fulfilment: true },
+    select: {
+      id: true,
+      fulfilment: true,
+      title: true,
+      order: { select: { id: true, buyerId: true } },
+    },
   });
   if (!line) throw new SalesError("NOT_FOUND", "Sale not found.", 404);
 
@@ -288,6 +317,13 @@ export async function markUnfulfillable(input: {
       fulfilmentNote: reason,
       shippedAt: null,
     },
+  });
+
+  void events.orderUnfulfillable({
+    buyerUserId: line.order.buyerId,
+    itemTitle: line.title,
+    orderId: line.order.id,
+    reason,
   });
 
   /**

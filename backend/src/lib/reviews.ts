@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { events } from "./notifications";
 import { OrderStatus } from "../generated/prisma/enums";
 
 /**
@@ -146,6 +147,8 @@ export async function upsertReview(input: {
     );
   }
 
+  const existed = check.mine !== null;
+
   const review = await prisma.review.upsert({
     where: { listingId_authorId: { listingId: input.listingId, authorId: input.userId } },
     create: {
@@ -162,8 +165,22 @@ export async function upsertReview(input: {
       createdAt: true,
       updatedAt: true,
       author: { select: { name: true } },
+      listing: {
+        select: { title: true, slug: true, seller: { select: { userId: true } } },
+      },
     },
   });
+
+  // Only on a new review. Editing your own wording is not news to the seller,
+  // and notifying on every keystroke-level change is how a bell becomes noise.
+  if (!existed && review.listing.seller?.userId) {
+    void events.reviewReceived({
+      sellerUserId: review.listing.seller.userId,
+      itemTitle: review.listing.title,
+      rating: review.rating,
+      listingSlug: review.listing.slug,
+    });
+  }
 
   return review;
 }

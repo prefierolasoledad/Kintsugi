@@ -1,0 +1,504 @@
+import { Router } from "express";
+import { z } from "zod";
+import { prisma } from "../lib/prisma";
+import { checkRateLimit } from "../lib/rateLimit";
+import { requireAuth } from "../middleware/requireAuth";
+import { requireAdmin } from "../middleware/requireAdmin";
+import {
+  ADMIN_COOKIE_NAME,
+  ADMIN_SESSION_SECONDS,
+  AdminAuthError,
+  adminTokenSecondsLeft,
+  clearAdminCookie,
+  generateTotpSecret,
+  setAdminCookie,
+  stepUp,
+  totpEnrolment,
+  verifyTotp,
+} from "../lib/adminAuth";
+import {
+  ModerationError,
+  auditLog,
+  listReports,
+  reinstateUser,
+  removeListing,
+  removeReview,
+  reportCounts,
+  resolveReport,
+  restoreListing,
+  suspendUser,
+} from "../lib/moderation";
+import {
+  attention,
+  customerDetail,
+  listCatalogue,
+  listCustomers,
+  listOrders,
+  metrics,
+  orderDetail,
+  recentOrders,
+  topSellers,
+  type Range,
+} from "../lib/adminStats";
+import {
+  ListingStatus,
+  OrderStatus,
+  ReportStatus,
+  UserRole,
+} from "../generated/prisma/enums";
+
+export const adminRouter = Router();
+
+function fail(res: import("express").Response, err: unknown, fallback: string) {
+  if (err instanceof AdminAuthError || err instanceof ModerationError) {
+    return res.status(err.status).json({ error: err.message, code: err.code });
+  }
+  console.error(fallback, err);
+  return res.status(500).json({ error: fallback });
+}
+
+/* ================================================================== *
+ * Step-up authentication
+ *
+ * These routes need an ordinary session but NOT an admin one — they are
+ * how an admin one is obtained.
+ * ================================================================== */
+
+/** Whether the caller could use the panel, and whether they're in it now. */
+adminRouter.get("/session", requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { role: true, totpConfirmedAt: true },
+    });
+
+    const isAdmin = user?.role === UserRole.ADMIN;
+    // A non-admin gets a plain false rather than a 403. This endpoint decides
+    // whether to render a link, and an error would be noise on every page.
+    res.json({
+      isAdmin,
+      needsTotpSetup: isAdmin && !user?.totpConfirmedAt,
+      active: false,
+      expiresInSeconds: ADMIN_SESSION_SECONDS,
+    });
+  } catch (err) {
+    fail(res, err, "Could not check admin status.");
+  }
+});
+
+/** Confirms an admin session is live. Behind requireAdmin, so a 401 is the answer. */
+adminRouter.get("/session/active", requireAdmin, async (req, res) => {
+  res.json({
+    active: true,
+    secondsLeft: adminTokenSecondsLeft(req.cookies?.[ADMIN_COOKIE_NAME]),
+  });
+});
+
+const setupBody = z.object({ password: z.string().min(1) });
+
+/**
+ * Starts TOTP enrolment.
+ *
+ * Requires the password again even though the caller is signed in: enrolling a
+ * second factor from a session that might be stolen would defeat the point of
+ * having one.
+ */
+adminRouter.post("/totp/setup", requireAuth, async (req, res) => {
+  try {
+    const parsed = setupBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Enter your password.", code: "INVALID_INPUT" });
+    }
+
+    const limit = checkRateLimit(`admin-totp:${req.userId}`, 10, 60 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({ error: "Too many attempts.", code: "RATE_LIMITED" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { id: true, email: true, role: true, passwordHash: true, totpConfirmedAt: true },
+    });
+    if (!user || user.role !== UserRole.ADMIN) {
+      return res.status(403).json({ error: "Not available.", code: "NOT_ADMIN" });
+    }
+
+    const bcrypt = await import("bcryptjs");
+    if (!(await bcrypt.default.compare(parsed.data.password, user.passwordHash))) {
+      return res.status(401).json({ error: "That password is wrong.", code: "BAD_PASSWORD" });
+    }
+
+    if (user.totpConfirmedAt) {
+      return res.status(409).json({
+        error: "Two-factor is already set up. Revoke and re-grant admin from the CLI to reset it.",
+        code: "ALREADY_ENROLLED",
+      });
+    }
+
+    const secret = generateTotpSecret();
+    // Stored unconfirmed. totpConfirmedAt stays null until a code proves the
+    // authenticator app actually has it — otherwise a half-finished enrolment
+    // would lock the account out of its own panel.
+    await prisma.user.update({ where: { id: user.id }, data: { totpSecret: secret } });
+
+    const enrolment = await totpEnrolment(user.email, secret);
+    res.json({
+      qrDataUrl: enrolment.qrDataUrl,
+      // Shown so it can be typed into an app that cannot scan.
+      secret: enrolment.secret,
+    });
+  } catch (err) {
+    fail(res, err, "Could not start two-factor setup.");
+  }
+});
+
+const confirmBody = z.object({ code: z.string().trim().min(6).max(10) });
+
+adminRouter.post("/totp/confirm", requireAuth, async (req, res) => {
+  try {
+    const parsed = confirmBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Enter the six-digit code.", code: "INVALID_INPUT" });
+    }
+
+    const limit = checkRateLimit(`admin-totp-confirm:${req.userId}`, 10, 15 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({ error: "Too many attempts.", code: "RATE_LIMITED" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { id: true, role: true, totpSecret: true, totpConfirmedAt: true },
+    });
+    if (!user || user.role !== UserRole.ADMIN || !user.totpSecret) {
+      return res.status(400).json({ error: "Start setup first.", code: "NOT_STARTED" });
+    }
+    if (user.totpConfirmedAt) {
+      return res.status(409).json({ error: "Already set up.", code: "ALREADY_ENROLLED" });
+    }
+
+    if (!verifyTotp(user.totpSecret, parsed.data.code)) {
+      return res.status(400).json({ error: "That code isn't right.", code: "BAD_CODE" });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { totpConfirmedAt: new Date() },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not confirm two-factor setup.");
+  }
+});
+
+const stepUpBody = z.object({
+  password: z.string().min(1),
+  code: z.string().trim().min(6).max(10),
+});
+
+adminRouter.post("/session", requireAuth, async (req, res) => {
+  try {
+    const parsed = stepUpBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: "Enter your password and code.", code: "INVALID_INPUT" });
+    }
+
+    /**
+     * Rate limited hard.
+     *
+     * Six digits is a million combinations, and the verify window accepts three
+     * of them at any moment. Without a limit that is brute-forceable in hours;
+     * with one it is not brute-forceable at all.
+     */
+    const limit = checkRateLimit(`admin-stepup:${req.userId}`, 8, 15 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({
+        error: "Too many attempts. Wait a few minutes.",
+        code: "RATE_LIMITED",
+        retryAfterSeconds: limit.retryAfterSeconds,
+      });
+    }
+
+    const token = await stepUp({
+      userId: req.userId!,
+      password: parsed.data.password,
+      totpCode: parsed.data.code,
+    });
+
+    setAdminCookie(res, token);
+    res.json({ active: true, expiresInSeconds: ADMIN_SESSION_SECONDS });
+  } catch (err) {
+    fail(res, err, "Could not sign in to the admin panel.");
+  }
+});
+
+adminRouter.post("/session/end", requireAuth, async (_req, res) => {
+  clearAdminCookie(res);
+  res.status(204).end();
+});
+
+/* ================================================================== *
+ * Everything below requires a live admin session.
+ * ================================================================== */
+
+adminRouter.use(requireAdmin);
+
+adminRouter.get("/overview", async (_req, res) => {
+  try {
+    const [reports, listings, activeListings, users, suspended, orders, paidOrders] =
+      await Promise.all([
+        reportCounts(),
+        prisma.listing.count(),
+        prisma.listing.count({ where: { status: "ACTIVE", deletedAt: null } }),
+        prisma.user.count(),
+        prisma.user.count({ where: { suspendedAt: { not: null } } }),
+        prisma.order.count(),
+        prisma.order.count({ where: { status: "PAID" } }),
+      ]);
+
+    res.json({
+      reports,
+      catalogue: { total: listings, active: activeListings },
+      accounts: { total: users, suspended },
+      orders: { total: orders, paid: paidOrders },
+    });
+  } catch (err) {
+    fail(res, err, "Could not load the overview.");
+  }
+});
+
+/* ---- dashboard ---- *
+ *
+ * All reads. The queries live in adminStats.ts; nothing below this comment and
+ * above "actions" changes any state.
+ */
+
+const rangeParam = z.coerce.number().int().refine((n): n is Range => n === 7 || n === 30 || n === 90);
+
+function range(req: import("express").Request): Range {
+  const parsed = rangeParam.safeParse(req.query.days ?? 30);
+  return parsed.success ? parsed.data : 30;
+}
+
+function pageParam(req: import("express").Request): number {
+  const parsed = z.coerce.number().int().min(1).max(10_000).safeParse(req.query.page ?? 1);
+  return parsed.success ? parsed.data : 1;
+}
+
+/** Trimmed, and blank becomes undefined so an empty search box is not a filter. */
+function queryParam(req: import("express").Request): string | undefined {
+  const raw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  return raw.length > 0 ? raw.slice(0, 200) : undefined;
+}
+
+adminRouter.get("/metrics", async (req, res) => {
+  try {
+    const days = range(req);
+    const [data, needs, sellers, recent] = await Promise.all([
+      metrics(days),
+      attention(),
+      topSellers(days),
+      recentOrders(),
+    ]);
+    res.json({ ...data, attention: needs, topSellers: sellers, recentOrders: recent });
+  } catch (err) {
+    fail(res, err, "Could not load the dashboard.");
+  }
+});
+
+adminRouter.get("/orders", async (req, res) => {
+  try {
+    const status = z
+      .enum(["ALL", "PENDING_PAYMENT", "PROCESSING", "PAID", "FAILED", "CANCELLED"])
+      .catch("ALL")
+      .parse(req.query.status ?? "ALL");
+    res.json(
+      await listOrders({
+        q: queryParam(req),
+        status: status === "ALL" ? "ALL" : (status as OrderStatus),
+        page: pageParam(req),
+      })
+    );
+  } catch (err) {
+    fail(res, err, "Could not load orders.");
+  }
+});
+
+adminRouter.get("/orders/:id", async (req, res) => {
+  try {
+    const order = await orderDetail(req.params.id);
+    if (!order) return res.status(404).json({ error: "No such order.", code: "NOT_FOUND" });
+    res.json({ order });
+  } catch (err) {
+    fail(res, err, "Could not load that order.");
+  }
+});
+
+adminRouter.get("/customers", async (req, res) => {
+  try {
+    const filter = z
+      .enum(["ALL", "SELLERS", "SUSPENDED", "ADMINS"])
+      .catch("ALL")
+      .parse(req.query.filter ?? "ALL");
+    res.json(await listCustomers({ q: queryParam(req), filter, page: pageParam(req) }));
+  } catch (err) {
+    fail(res, err, "Could not load customers.");
+  }
+});
+
+adminRouter.get("/customers/:id", async (req, res) => {
+  try {
+    const customer = await customerDetail(req.params.id);
+    if (!customer) return res.status(404).json({ error: "No such account.", code: "NOT_FOUND" });
+    res.json({ customer });
+  } catch (err) {
+    fail(res, err, "Could not load that account.");
+  }
+});
+
+adminRouter.get("/catalogue", async (req, res) => {
+  try {
+    const status = z
+      .enum(["ALL", "DRAFT", "ACTIVE", "RESERVED", "SOLD", "REMOVED"])
+      .catch("ALL")
+      .parse(req.query.status ?? "ALL");
+    res.json(
+      await listCatalogue({
+        q: queryParam(req),
+        status: status === "ALL" ? "ALL" : (status as ListingStatus | "REMOVED"),
+        page: pageParam(req),
+      })
+    );
+  } catch (err) {
+    fail(res, err, "Could not load the catalogue.");
+  }
+});
+
+/* ---- reports ---- */
+
+adminRouter.get("/reports", async (req, res) => {
+  try {
+    const status = z
+      .enum(["OPEN", "RESOLVED", "DISMISSED", "ALL"])
+      .default("OPEN")
+      .safeParse(req.query.status ?? "OPEN");
+    if (!status.success) {
+      return res.status(400).json({ error: "Unknown status.", code: "INVALID_INPUT" });
+    }
+
+    const [reports, counts] = await Promise.all([
+      listReports(status.data === "ALL" ? "ALL" : (status.data as ReportStatus)),
+      reportCounts(),
+    ]);
+    res.json({ reports, counts });
+  } catch (err) {
+    fail(res, err, "Could not load reports.");
+  }
+});
+
+const resolveBody = z.object({
+  outcome: z.string().trim().min(3).max(1000),
+  dismissed: z.boolean().default(false),
+});
+
+adminRouter.post("/reports/:id/resolve", async (req, res) => {
+  try {
+    const parsed = resolveBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: "Write what you decided.", code: "INVALID_INPUT", field: "outcome" });
+    }
+    await resolveReport({
+      moderatorId: req.adminId!,
+      reportId: req.params.id,
+      outcome: parsed.data.outcome,
+      dismissed: parsed.data.dismissed,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not close that report.");
+  }
+});
+
+/* ---- actions ---- */
+
+const actionBody = z.object({
+  reason: z.string().trim().min(3).max(1000),
+  reportId: z.string().uuid().nullish(),
+});
+
+function parseAction(req: import("express").Request) {
+  const parsed = actionBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    throw new ModerationError("REASON_REQUIRED", "Write a reason. The person sees this.", 400);
+  }
+  return parsed.data;
+}
+
+adminRouter.post("/listings/:id/remove", async (req, res) => {
+  try {
+    const { reason, reportId } = parseAction(req);
+    await removeListing({
+      moderatorId: req.adminId!,
+      listingId: req.params.id,
+      reason,
+      reportId,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not remove that listing.");
+  }
+});
+
+adminRouter.post("/listings/:id/restore", async (req, res) => {
+  try {
+    const { reason } = parseAction(req);
+    await restoreListing({ moderatorId: req.adminId!, listingId: req.params.id, reason });
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not restore that listing.");
+  }
+});
+
+adminRouter.post("/reviews/:id/remove", async (req, res) => {
+  try {
+    const { reason, reportId } = parseAction(req);
+    await removeReview({ moderatorId: req.adminId!, reviewId: req.params.id, reason, reportId });
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not remove that review.");
+  }
+});
+
+adminRouter.post("/users/:id/suspend", async (req, res) => {
+  try {
+    const { reason, reportId } = parseAction(req);
+    await suspendUser({ moderatorId: req.adminId!, userId: req.params.id, reason, reportId });
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not suspend that account.");
+  }
+});
+
+adminRouter.post("/users/:id/reinstate", async (req, res) => {
+  try {
+    const { reason } = parseAction(req);
+    await reinstateUser({ moderatorId: req.adminId!, userId: req.params.id, reason });
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not reinstate that account.");
+  }
+});
+
+/* ---- audit ---- */
+
+adminRouter.get("/audit", async (_req, res) => {
+  try {
+    res.json({ actions: await auditLog() });
+  } catch (err) {
+    fail(res, err, "Could not load the audit log.");
+  }
+});

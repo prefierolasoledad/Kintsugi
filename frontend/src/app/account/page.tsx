@@ -226,8 +226,12 @@ export default function AccountPage() {
               <AccountCard
                 icon={<BellIcon />}
                 title="Notifications"
-                description="Choose what we contact you about."
-                badge={<PlannedBadge />}
+                /* Describes what this actually is. Per-type preferences aren't
+                   built, and with in-app delivery only there is nothing to opt
+                   out of receiving — so promising settings here would be the
+                   dishonest half of the old copy. */
+                description="Sales, deliveries, and decisions about your account."
+                href="/account/notifications"
               />
             </div>
           </section>

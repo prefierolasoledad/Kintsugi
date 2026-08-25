@@ -124,6 +124,24 @@ authRouter.post("/login", async (req, res) => {
     return;
   }
 
+  /**
+   * Suspension is checked after the password, deliberately.
+   *
+   * Checking first would turn login into an oracle for which accounts are
+   * suspended, without anyone needing to know the password. The reason is
+   * included because a vague refusal is indistinguishable from a bug, and
+   * generates support instead of preventing it.
+   */
+  if (user.suspendedAt) {
+    res.status(403).json({
+      error: user.suspendedReason
+        ? `This account is suspended. ${user.suspendedReason}`
+        : "This account is suspended.",
+      code: "ACCOUNT_SUSPENDED",
+    });
+    return;
+  }
+
   if (!user.emailVerified) {
     res.status(403).json({
       error: "Please verify your email before logging in.",

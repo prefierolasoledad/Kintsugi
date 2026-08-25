@@ -13,6 +13,9 @@ import { assertProviderConfigured } from "./lib/paymentProvider";
 import { startReservationSweeper } from "./lib/reservations";
 import { ordersRouter } from "./routes/orders";
 import { addressesRouter } from "./routes/addresses";
+import { adminRouter } from "./routes/admin";
+import { notificationsRouter } from "./routes/notifications";
+import { reportsRouter } from "./routes/reports";
 import { reservationsRouter } from "./routes/reservations";
 import { reviewsRouter } from "./routes/reviews";
 import { salesRouter } from "./routes/sales";
@@ -67,6 +70,9 @@ app.use("/orders", ordersRouter);
 app.use("/wishlist", wishlistRouter);
 app.use("/reviews", reviewsRouter);
 app.use("/addresses", addressesRouter);
+app.use("/notifications", notificationsRouter);
+app.use("/reports", reportsRouter);
+app.use("/admin", adminRouter);
 // Verification and sales are mounted before the listing router so their paths
 // aren't shadowed by its own — `/seller/listings/:id` would otherwise swallow
 // anything it pattern-matches.

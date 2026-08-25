@@ -26,6 +26,8 @@ const SUITES: Suite[] = [
   { name: "reviews", file: "api/reviews.ts", kind: "api" },
   { name: "checkout-bff", file: "api/checkout-bff.ts", kind: "api" },
   { name: "addresses-sales", file: "api/addresses-and-sales.ts", kind: "api" },
+  { name: "notifications", file: "api/notifications.ts", kind: "api" },
+  { name: "admin", file: "api/admin.ts", kind: "api" },
   { name: "identity", file: "api/identity.ts", kind: "api" },
   { name: "identity-stale", file: "api/identity-stale-session.ts", kind: "api" },
   // Waits ~60s for the reconciliation sweeper.
@@ -34,6 +36,8 @@ const SUITES: Suite[] = [
   { name: "browser-catalog", file: "browser/catalog.ts", kind: "browser" },
   { name: "browser-checkout", file: "browser/checkout.ts", kind: "browser" },
   { name: "browser-fulfilment", file: "browser/fulfilment.ts", kind: "browser" },
+  { name: "browser-admin", file: "browser/admin-and-notifications.ts", kind: "browser" },
+  { name: "browser-dashboard", file: "browser/admin-dashboard.ts", kind: "browser" },
   { name: "browser-wishlist", file: "browser/wishlist.ts", kind: "browser" },
   { name: "browser-reviews", file: "browser/reviews.ts", kind: "browser" },
   { name: "browser-identity", file: "browser/identity.ts", kind: "browser" },

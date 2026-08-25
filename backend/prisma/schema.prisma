@@ -182,6 +182,23 @@ model User {
   /// from bugs, and generate support instead of preventing it.
   suspendedReason    String?
 
+  /// TOTP, for admins only.
+  ///
+  /// WHY TOTP AND NOT SMS OR EMAIL
+  /// SMS is vulnerable to SIM-swap, which is a real attack against exactly the
+  /// kind of account that has admin rights. Email codes would depend on a
+  /// mailer that does not exist here. TOTP needs neither — an authenticator app
+  /// and a shared secret, and it is stronger than both.
+  ///
+  /// The secret is stored raw because it has to be: verifying a code requires
+  /// recomputing it, so there is no hashed form that would still work. That is
+  /// a real limitation of TOTP, and the mitigation is that it is only ever set
+  /// for admin accounts, of which there should be very few.
+  totpSecret         String?
+  /// Null until a code has been entered correctly. An enrolment that was
+  /// started but never confirmed must not be treated as a second factor.
+  totpConfirmedAt    DateTime?
+
   orders             Order[]
   wishlist           WishlistItem[]
   addresses          Address[]

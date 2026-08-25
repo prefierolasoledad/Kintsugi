@@ -3,6 +3,7 @@ import { Geist_Mono, Inter, Poppins } from "next/font/google";
 import SamePageLinkScroll from "@/components/SamePageLinkScroll";
 import { AuthProvider } from "@/lib/AuthContext";
 import { CartProvider } from "@/lib/CartContext";
+import { NotificationProvider } from "@/lib/NotificationContext";
 import { WishlistProvider } from "@/lib/WishlistContext";
 import "./globals.css";
 
@@ -42,8 +43,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               it has to be able to read who that is. */}
           <WishlistProvider>
             <CartProvider>
-              <SamePageLinkScroll />
-              {children}
+              <NotificationProvider>
+                <SamePageLinkScroll />
+                {children}
+              </NotificationProvider>
             </CartProvider>
           </WishlistProvider>
         </AuthProvider>

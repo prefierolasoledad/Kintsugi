@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { events } from "./notifications";
 import type { Decision } from "./kycProvider";
 import { VerificationStatus } from "../generated/prisma/enums";
 
@@ -71,6 +72,16 @@ export async function applyDecision(input: {
       },
     }),
   ]);
+
+  // After the transaction: telling them must not be able to undo the decision.
+  const profile = await prisma.sellerProfile.findUnique({
+    where: { id: attempt.sellerProfileId },
+    select: { userId: true },
+  });
+  if (profile) {
+    if (verified) void events.identityVerified(profile.userId);
+    else void events.identityRejected({ userId: profile.userId, reason: rejectionReason ?? "" });
+  }
 
   return { applied: true, verified, sellerProfileId: attempt.sellerProfileId };
 }

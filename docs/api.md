@@ -12,7 +12,9 @@ The browser does not call these directly. It calls the matching BFF path under
 ## Conventions
 
 **Auth.** Session state travels in two `httpOnly` cookies. Requests marked
-🔒 need a valid access token; 🏪 additionally requires a seller profile.
+🔒 need a valid access token; 🏪 additionally requires a seller profile;
+👮 requires a *separate* short-lived admin session obtained by step-up, which
+the ordinary login cookie does not grant — see [Admin](#admin--admin-).
 
 **Errors.** Consistent JSON:
 
@@ -617,6 +619,107 @@ anything.
 `verified` flag. That flag is **computed against real paid orders**, not
 assumed — seeded reviews have no order behind them, and a badge that isn't
 earned devalues every badge on the site.
+
+---
+
+## Reports — `/reports` 🔒
+
+Anyone signed in can report a listing, a review, or an account.
+
+### `GET /reports/reasons`
+
+The list the UI renders. Codes are stable; labels are not.
+
+### `POST /reports`
+
+```json
+{ "targetType": "LISTING", "targetId": "uuid", "reason": "COUNTERFEIT", "detail": "optional" }
+```
+
+**409 `ALREADY_REPORTED`** if you have already reported that thing — one voice
+per person, so a queue cannot be brigaded by one account clicking repeatedly.
+**404** for a target that does not exist.
+
+---
+
+## Admin — `/admin` 🔒👮
+
+Two separate gates, and being past the first does not get you past the second.
+
+**👮 = a live admin session**, which is *not* the ordinary login cookie. It is a
+distinct `kintsugi_admin` cookie, signed with a secret derived from
+`JWT_SECRET`, lasting **30 minutes**. Obtaining one needs the password **again**
+plus a TOTP code. See [ADR 0006](adr/0006-verification.md) for the identity
+side; the reasoning here is the same — a stolen shopping cookie must not carry
+the power to suspend accounts.
+
+`role: ADMIN` is granted **only by CLI** (`npm run admin:grant`). There is no
+promotion endpoint, and adding one would defeat the arrangement: the whole
+point is that granting admin needs shell access to the server, not a session in
+a browser.
+
+Failures return **401 `ADMIN_SESSION_REQUIRED`**, or **403 `ADMIN_REVOKED`** if
+the role was withdrawn while a session was still live — the role is re-read
+from the database on every request, so revocation takes effect immediately
+rather than when the token expires.
+
+### Step-up
+
+| Route | Needs | Notes |
+| --- | --- | --- |
+| `GET /admin/session` | 🔒 | `{ isAdmin, needsTotpSetup }`. Plain `false` for non-admins, not a 403 — this decides whether to render a link. |
+| `POST /admin/totp/setup` | 🔒 + password | Returns `{ qrDataUrl, secret }`. Stored unconfirmed. |
+| `POST /admin/totp/confirm` | 🔒 + code | Sets `totpConfirmedAt`. Until then the enrolment does not count. |
+| `POST /admin/session` | 🔒 + password + code | Mints the admin cookie. Rate limited to **8 per 15 min**. |
+| `GET /admin/session/active` | 👮 | `{ active, secondsLeft }`, read from the token's own `exp`. |
+| `POST /admin/session/end` | 🔒 | Clears the cookie. |
+
+A wrong password and a wrong code return the **same** message. Distinguishing
+them would tell an attacker which half they had already solved.
+
+### Dashboard — all read-only
+
+| Route | Returns |
+| --- | --- |
+| `GET /admin/metrics?days=7\|30\|90` | Headline figures, a daily series, `attention`, `topSellers`, `recentOrders` |
+| `GET /admin/orders?q=&status=&page=` | Paged orders; searches reference, buyer name, buyer email |
+| `GET /admin/orders/:id` | One order: lines, ship-to snapshot, payment reference |
+| `GET /admin/customers?q=&filter=&page=` | Paged accounts; `filter=ALL\|SELLERS\|SUSPENDED\|ADMINS` |
+| `GET /admin/customers/:id` | One account: lifetime spend, recent orders, shop, reports against |
+| `GET /admin/catalogue?q=&status=&page=` | Paged listings; `status` adds `REMOVED` for soft-deleted |
+| `GET /admin/overview` | Bare counts, used for the sidebar badge |
+| `GET /admin/reports?status=` | The moderation queue, **oldest first** |
+| `GET /admin/audit` | Every moderation action, newest first |
+
+Lists page at **25**, returning `{ rows, total, page, pages, pageSize }`.
+
+`metrics` counts **only `PAID` orders**, and the figure is labelled *gross
+sales*, never revenue: Kintsugi takes no cut, so none of it is the platform's.
+Period-on-period deltas come back **`null`**, not `0` or `100`, when the prior
+period had nothing to compare against.
+
+The report queue returns `reporterName` and **never the reporter's email**.
+
+### Actions — every one writes an audit row
+
+| Route | Effect |
+| --- | --- |
+| `POST /admin/listings/:id/remove` | Soft delete. Orders containing it keep working. |
+| `POST /admin/listings/:id/restore` | Returns it as **`DRAFT`**, never straight to live — republishing is the seller's call. |
+| `POST /admin/reviews/:id/remove` | Soft delete. |
+| `POST /admin/users/:id/suspend` | Blocks sign-in. Deletes nothing. |
+| `POST /admin/users/:id/reinstate` | Lifts it. |
+| `POST /admin/reports/:id/resolve` | Closes a report; `dismissed: true` records "looked, found nothing". |
+
+All take `{ reason, reportId? }`. **`reason` is required** (3–1000 chars) and is
+shown verbatim to the person affected — **400 `REASON_REQUIRED`** without one.
+An audit row that reads only "suspended by X" is useless six months later, and
+someone whose listing vanished is owed the reason.
+
+**400** for suspending yourself, **403 `CANNOT_SUSPEND_ADMIN`** for suspending
+another admin — revoke the role from the CLI first. Both are checked *before*
+"already suspended", so the answer does not depend on the target's current
+state.
 
 ---
 
