@@ -10,6 +10,7 @@ import { profileRouter } from "./routes/profile";
 import { startOrderSweeper } from "./lib/orders";
 import { assertKycConfigured } from "./lib/kycProvider";
 import { assertProviderConfigured } from "./lib/paymentProvider";
+import { assertMailConfigured } from "./lib/mailer";
 import { startReservationSweeper } from "./lib/reservations";
 import { ordersRouter } from "./routes/orders";
 import { addressesRouter } from "./routes/addresses";
@@ -87,9 +88,11 @@ app.use("/seller", sellerRouter);
  */
 let paymentSummary: string;
 let kycSummary: string;
+let mailSummary: string;
 try {
   paymentSummary = assertProviderConfigured();
   kycSummary = assertKycConfigured();
+  mailSummary = assertMailConfigured();
 } catch (err) {
   console.error(`\nConfiguration error:\n  ${(err as Error).message}\n`);
   process.exit(1);
@@ -99,6 +102,7 @@ app.listen(PORT, () => {
   console.log(`Kintsugi backend listening on http://localhost:${PORT}`);
   console.log(`Payments: ${paymentSummary}`);
   console.log(`Identity: ${kycSummary}`);
+  console.log(`Email:    ${mailSummary}`);
 
   // Expired holds must be returned to stock by something other than a new
   // reservation attempt: a fully-held listing is hidden from the catalog, so no
