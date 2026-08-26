@@ -16,16 +16,16 @@ export default function ShippingLabelsPage() {
 
       <h2>Packing it</h2>
       <p>
-        You're responsible for packing the item well enough to survive transit.
+        You&apos;re responsible for packing the item well enough to survive transit.
         For anything fragile — ceramics, glass, framed items — that means real
-        padding, not a single layer of newspaper. Damage from bad packing isn't
+        padding, not a single layer of newspaper. Damage from bad packing isn&apos;t
         covered.
       </p>
 
       <h2>Tracking</h2>
       <p>
         Once the label is scanned at drop-off, tracking updates automatically on
-        both your order page and the buyer's — you don't need to enter anything
+        both your order page and the buyer&apos;s — you don&apos;t need to enter anything
         manually.
       </p>
 

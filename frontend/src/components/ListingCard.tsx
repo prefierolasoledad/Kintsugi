@@ -13,8 +13,10 @@ export default function ListingCard({ item }: { item: CatalogListing }) {
   const discount = discountPercent(item);
   const cover = item.images[0];
   const href = `/listing/${item.slug}`;
-  const isNew =
-    Date.now() - new Date(item.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000;
+  // Comes from the API. Working it out here needed Date.now() during render,
+  // which is impure and risks a hydration mismatch on a listing sitting near
+  // the seven-day boundary.
+  const isNew = item.isNew;
 
   return (
     <div className="group">

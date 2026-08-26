@@ -42,7 +42,7 @@ export default function HowItWorksPage() {
         <a href="/sell/seller-fees" className="text-gold-dim underline">
           seller fees
         </a>{" "}
-        for what's taken out before that happens.
+        for what&apos;s taken out before that happens.
       </p>
     </InfoPage>
   );

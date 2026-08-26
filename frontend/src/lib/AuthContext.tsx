@@ -42,7 +42,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * Timers don't fire on a sleeping machine, so a visibility check covers the
    * "closed the laptop for an hour" case that a bare interval would miss.
    */
-  const lastCheck = useRef(Date.now());
+  /**
+   * Null until the first check, rather than seeded with Date.now().
+   *
+   * Reading the clock during render makes the component impure: the value
+   * differs between the server render and the client hydration. Harmless for a
+   * timer baseline, but the rule that flags it is right, and null-then-set is
+   * both correct and no more code.
+   */
+  const lastCheck = useRef<number | null>(null);
 
   // Keyed on the id, not the object: revalidating replaces `user` with a new
   // object every 13 minutes, and depending on that would tear the timer down
@@ -69,7 +77,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     function onVisible() {
       if (document.visibilityState !== "visible") return;
-      if (Date.now() - lastCheck.current < INTERVAL_MS) return;
+      // No check yet means nothing to be stale about.
+      if (lastCheck.current !== null && Date.now() - lastCheck.current < INTERVAL_MS) return;
       revalidate();
     }
 

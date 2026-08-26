@@ -71,6 +71,9 @@ async function ratingsFor(listingIds: string[]): Promise<Map<string, RatingAgg>>
   );
 }
 
+/** How long a listing reads as "new". A week, matching the badge's wording. */
+const RECENTLY_LISTED_MS = 7 * 24 * 60 * 60 * 1000;
+
 function serializeListing(row: ListingRow, rating: RatingAgg) {
   return {
     id: row.id,
@@ -88,6 +91,21 @@ function serializeListing(row: ListingRow, rating: RatingAgg) {
     status: row.status,
     featured: row.featured,
     createdAt: row.createdAt.toISOString(),
+    /**
+     * WHETHER THIS COUNTS AS RECENTLY LISTED — decided here, not in the UI.
+     *
+     * The card used to work it out with Date.now() during render, which makes
+     * the component impure: a server render and a client hydration happen at
+     * different instants, so a listing sitting near the boundary can produce
+     * different markup in each and a hydration mismatch. It could not bite
+     * while the card was only ever rendered on the server, and it was one
+     * careless import away from doing so.
+     *
+     * Sent as a field because it is a fact the server knows and the client
+     * should not be re-deriving. Same reasoning as `rating`: computed once,
+     * server-side, rather than recalculated by every reader.
+     */
+    isNew: Date.now() - row.createdAt.getTime() < RECENTLY_LISTED_MS,
     category: row.category,
     seller: {
       shopName: row.seller.shopName,

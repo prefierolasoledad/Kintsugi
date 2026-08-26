@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import Footer from "@/components/Footer";
 import ListingForm from "@/components/ListingForm";
 import Nav from "@/components/Nav";
-import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import {
   createListing,

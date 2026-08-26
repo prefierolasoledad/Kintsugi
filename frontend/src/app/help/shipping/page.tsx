@@ -9,7 +9,7 @@ export default function ShippingPage() {
     >
       <h2>Cost</h2>
       <p>
-        Shipping cost is calculated from the item's actual size and weight, shown
+        Shipping cost is calculated from the item&apos;s actual size and weight, shown
         at checkout before you pay — not a flat rate that overcharges for small
         items and undercharges for furniture.
       </p>
@@ -25,12 +25,12 @@ export default function ShippingPage() {
       <h2>Tracking</h2>
       <p>
         Every order includes tracking, visible from your order page the moment
-        the seller's label is scanned at drop-off.
+        the seller&apos;s label is scanned at drop-off.
       </p>
 
       <h2>Damaged in transit</h2>
       <p>
-        If it arrives damaged, that's covered under{" "}
+        If it arrives damaged, that&apos;s covered under{" "}
         <a href="/help/returns-refunds" className="text-gold-dim underline">
           returns &amp; refunds
         </a>{" "}

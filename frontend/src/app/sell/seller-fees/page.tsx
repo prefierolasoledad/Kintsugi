@@ -7,7 +7,7 @@ export default function SellerFeesPage() {
       title="Seller fees"
       intro="No listing fee, no monthly charge. We only take a cut when your item actually sells."
     >
-      <h2>What's deducted at sale</h2>
+      <h2>What&apos;s deducted at sale</h2>
       <ul>
         <li>
           <strong>8% marketplace commission</strong> — covers hosting your listing,
@@ -27,7 +27,7 @@ export default function SellerFeesPage() {
         the fact.
       </p>
 
-      <h2>What's free</h2>
+      <h2>What&apos;s free</h2>
       <p>
         Listing an item costs nothing, whether it sells or not. Relisting an
         expired listing is also free.

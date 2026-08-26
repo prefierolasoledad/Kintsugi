@@ -9,15 +9,15 @@ export default function TrustSafetyPage() {
     >
       <h2>Listings are checked, not just posted</h2>
       <p>
-        Photos and descriptions are reviewed before a listing goes live. It's not
+        Photos and descriptions are reviewed before a listing goes live. It&apos;s not
         a guarantee against every possible misrepresentation, but it catches the
         obvious ones.
       </p>
 
       <h2>Payment is held, not handed over</h2>
       <p>
-        A buyer's payment sits in escrow until they confirm the item arrived as
-        described. Sellers aren't paid up front, and buyers aren't paying into a
+        A buyer&apos;s payment sits in escrow until they confirm the item arrived as
+        described. Sellers aren&apos;t paid up front, and buyers aren&apos;t paying into a
         void — see{" "}
         <a href="/sell/payouts" className="text-gold-dim underline">
           payouts
@@ -27,7 +27,7 @@ export default function TrustSafetyPage() {
 
       <h2>Everything ships — no in-person meetups</h2>
       <p>
-        There's no option to arrange a local pickup or cash handoff. Every
+        There&apos;s no option to arrange a local pickup or cash handoff. Every
         transaction goes through the platform, with tracking and a return
         window, on purpose.
       </p>

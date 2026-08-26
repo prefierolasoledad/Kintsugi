@@ -9,9 +9,9 @@ export default function PayoutsPage() {
     >
       <h2>Why payment is held</h2>
       <p>
-        When an item sells, the buyer's payment is held rather than sent to you
-        immediately. This protects both sides: the buyer isn't paying into the
-        void, and you're not shipping something on a promise.
+        When an item sells, the buyer&apos;s payment is held rather than sent to you
+        immediately. This protects both sides: the buyer isn&apos;t paying into the
+        void, and you&apos;re not shipping something on a promise.
       </p>
 
       <h2>When you actually get paid</h2>
@@ -29,7 +29,7 @@ export default function PayoutsPage() {
       <h2>How you get paid</h2>
       <p>
         Payouts go to the bank account you connect in your seller settings.
-        There's no minimum payout threshold — even a single sale gets paid out
+        There&apos;s no minimum payout threshold — even a single sale gets paid out
         on its own, not batched with future sales.
       </p>
 

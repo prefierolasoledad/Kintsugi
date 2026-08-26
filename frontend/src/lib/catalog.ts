@@ -30,6 +30,15 @@ export type CatalogListing = {
   status: string;
   featured: boolean;
   createdAt: string;
+  /**
+   * Listed within the last week, decided by the API.
+   *
+   * Not derived here from createdAt: that needs the current time, and reading
+   * the clock while rendering makes a component impure — the server and the
+   * client see different instants, and a listing near the boundary produces a
+   * hydration mismatch.
+   */
+  isNew: boolean;
   category: { slug: string; title: string };
   seller: { shopName: string; verified: boolean };
   images: { url: string; alt: string | null; position: number }[];
