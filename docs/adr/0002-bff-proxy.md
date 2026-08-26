@@ -52,6 +52,18 @@ for *browser* traffic.
   required because refresh-and-retry has to send the same body twice.
 - The BFF is not a security control. It forwards without interpreting, so every
   rule is enforced in Express.
+- **Refresh-and-retry must not fire on a 401 that has nothing to do with the
+  access token.** The proxy treats 401 as "token expired, refresh and try
+  again", which is right for a stale shopping request. It is wrong for the admin
+  endpoints: a bad password or code at step-up is a 401 about the credentials,
+  and retrying sent the whole attempt twice — spending two of the eight allowed
+  tries per fifteen minutes for one wrong code, so the real budget was four. It
+  also ran bcrypt and TOTP verification twice per failure, and turned the
+  panel's routine "is an admin session live?" check into a needless refresh
+  token rotation on every page load. The retry is now skipped when the 401 body
+  carries a code saying the token was never the problem
+  (`worthRefreshing` in `lib/backendProxy.ts`), defaulting to retry on anything
+  unparseable so an unexpected shape cannot silently disable refresh.
 
 ## Alternatives considered
 

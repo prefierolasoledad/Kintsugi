@@ -37,6 +37,44 @@ function applySetCookies(cookieHeader: string, setCookies: string[]): string {
 const REFRESH_COOKIE = "kintsugi_refresh";
 
 /**
+ * 401 codes that mean "the access token is fine; something else was refused".
+ *
+ * A 401 normally means the access token expired, so the proxy refreshes and
+ * retries — right for a shopping request that went stale mid-flight.
+ *
+ * The admin endpoints break that assumption. A wrong password or code at
+ * step-up is a 401 about the CREDENTIALS, and no amount of refreshing changes
+ * the answer. Retrying it silently sent the whole attempt twice, which spent
+ * two of the eight allowed tries per fifteen minutes for one wrong code — so
+ * the real budget was four, and a moderator could lock themselves out in half
+ * the attempts the limit advertises. It also ran bcrypt and TOTP verification
+ * twice for every failure.
+ *
+ * ADMIN_SESSION_REQUIRED is the same story and far more common: it is the
+ * ordinary answer to "is an admin session live?", which the panel asks on every
+ * page load. Each of those was triggering a pointless refresh — and a refresh
+ * rotates the refresh token, so a page load was needlessly churning the token
+ * family that theft detection watches.
+ */
+const NOT_A_TOKEN_PROBLEM = new Set(["ADMIN_SESSION_REQUIRED", "ADMIN_AUTH_FAILED"]);
+
+/**
+ * Whether a 401 is worth refreshing for.
+ *
+ * Defaults to true on anything unparseable, so an unexpected body shape keeps
+ * the old behaviour rather than silently disabling refresh.
+ */
+function worthRefreshing(body: string | null): boolean {
+  if (!body) return true;
+  try {
+    const code = (JSON.parse(body) as { code?: string }).code;
+    return !code || !NOT_A_TOKEN_PROBLEM.has(code);
+  } catch {
+    return true;
+  }
+}
+
+/**
  * How long a completed refresh stays remembered. Requests that were already
  * on their way to the backend when the rotation happened come back with a 401
  * and a now-stale refresh token; without this they would present that old
@@ -138,7 +176,11 @@ export async function proxyToBackend(req: NextRequest, backendPath: string) {
   // plain Set lookup on the full value would miss.
   const pathOnly = backendPath.split("?")[0];
 
-  if (result.status === 401 && !NO_REFRESH_RETRY.has(pathOnly)) {
+  if (
+    result.status === 401 &&
+    !NO_REFRESH_RETRY.has(pathOnly) &&
+    worthRefreshing(result.body)
+  ) {
     const refresh = await refreshOnce(originalCookieHeader);
 
     if (refresh.ok) {
