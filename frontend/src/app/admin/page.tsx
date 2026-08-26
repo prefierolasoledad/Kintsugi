@@ -82,7 +82,7 @@ function Dashboard() {
       </div>
 
       {/* ---- headline numbers ---- */}
-      <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Stat
           label="Gross sales"
           value={money(data.grossCents)}
@@ -91,6 +91,20 @@ function Dashboard() {
         />
         <Stat label="Orders" value={data.orders.toLocaleString()} delta={data.deltas.orders} note={`${data.buyers} buyer${data.buyers === 1 ? "" : "s"}`} />
         <Stat label="Average order" value={money(data.aovCents)} delta={data.deltas.aov} />
+        {/**
+         * Refunds sit beside gross rather than being subtracted from it.
+         *
+         * A fully refunded order drops out of gross on its own; a partly
+         * refunded one does not, because it is still PAID. Showing both means
+         * the reader can subtract knowingly instead of being handed a net
+         * figure that hides how much went back.
+         */}
+        <Stat
+          label="Refunded"
+          value={money(data.refundedCents)}
+          delta={data.deltas.refunded}
+          note="Not deducted above"
+        />
         <Stat label="New accounts" value={data.newUsers.toLocaleString()} delta={data.deltas.newUsers} />
       </dl>
 

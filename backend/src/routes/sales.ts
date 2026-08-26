@@ -100,7 +100,7 @@ salesRouter.post("/sales/:id/cannot-send", async (req, res) => {
         .json({ error: "Tell the buyer why.", code: "INVALID_INPUT", field: "reason" });
     }
 
-    const { refundOwed } = await markUnfulfillable({
+    const result = await markUnfulfillable({
       sellerId: req.sellerId!,
       orderItemId: req.params.id,
       reason: parsed.data.reason,
@@ -108,10 +108,23 @@ salesRouter.post("/sales/:id/cannot-send", async (req, res) => {
 
     res.json({
       ok: true,
-      // Surfaced rather than hidden: the buyer has paid for something they will
-      // not receive, and refunds are not built. The UI says so out loud.
-      refundOwed,
-      note: "Refunds aren't built yet, so this has to be settled with the buyer directly.",
+      /**
+       * The refund outcome, reported rather than assumed.
+       *
+       * This used to return `refundOwed: true` and a note admitting refunds
+       * were not built. They are now issued in the same operation — but a
+       * provider can still refuse, so the seller is told which happened
+       * instead of being reassured either way.
+       */
+      refunded: result.refunded,
+      refundCents: result.refundCents,
+      refundStatus: result.refundStatus,
+      refundError: result.refundError,
+      note: result.refunded
+        ? "The buyer has been refunded automatically."
+        : result.refundError
+          ? "The buyer was told, but the refund did not go through — it is recorded for someone to settle."
+          : "Nothing to refund: this order was never paid for.",
     });
   } catch (err) {
     fail(res, err, "Could not update that sale.");

@@ -51,7 +51,9 @@ export type OrderStatus =
   | "PROCESSING"
   | "PAID"
   | "FAILED"
-  | "CANCELLED";
+  | "CANCELLED"
+  /** Fully refunded. A PARTLY refunded order stays PAID. */
+  | "REFUNDED";
 
 export type Metrics = {
   days: Range;
@@ -60,12 +62,15 @@ export type Metrics = {
   buyers: number;
   aovCents: number;
   newUsers: number;
+  /** Money sent back in the period. Reported beside gross, not netted off it. */
+  refundedCents: number;
   /** Null when the prior period had nothing to compare against. */
   deltas: {
     gross: number | null;
     orders: number | null;
     aov: number | null;
     newUsers: number | null;
+    refunded: number | null;
   };
   series: Array<{ date: string; grossCents: number; orders: number }>;
   attention: {
@@ -146,6 +151,22 @@ export type OrderDetail = {
     listingSlug: string | null;
     listingGone: boolean;
   }>;
+  refunds: AdminRefund[];
+  /** What is still refundable, in minor units. Computed server-side. */
+  refundableCents: number;
+};
+
+export type AdminRefund = {
+  id: string;
+  orderItemId: string | null;
+  amountCents: number;
+  currency: string;
+  status: "PENDING" | "SUCCEEDED" | "FAILED";
+  trigger: "SELLER_UNFULFILLABLE" | "ADMIN";
+  reason: string;
+  failureReason: string | null;
+  createdAt: string;
+  completedAt: string | null;
 };
 
 export type CustomerRow = {
@@ -299,6 +320,28 @@ export function getOrders(opts: { q?: string; status?: string; page?: number } =
 
 export function getOrder(id: string) {
   return request<{ order: OrderDetail }>(`/orders/${id}`);
+}
+
+/**
+ * Refunds part or all of an order.
+ *
+ * Amount is explicit rather than defaulting to the whole order: the common
+ * dispute is about one line in a basket spanning several sellers, and refunding
+ * everything by accident takes money from sellers who did their part.
+ */
+export function refundOrder(
+  orderId: string,
+  amountCents: number,
+  reason: string,
+  orderItemId?: string | null
+) {
+  return request<{ refund: { id: string; status: string; amountCents: number } }>(
+    `/orders/${orderId}/refund`,
+    {
+      method: "POST",
+      body: JSON.stringify({ amountCents, reason, orderItemId: orderItemId ?? null }),
+    }
+  );
 }
 
 export function getCustomers(opts: { q?: string; filter?: string; page?: number } = {}) {

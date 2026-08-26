@@ -71,6 +71,9 @@ const ORDER_TONE: Record<string, Tone> = {
   PENDING_PAYMENT: "warn",
   FAILED: "bad",
   CANCELLED: "neutral",
+  // Neutral, not bad. A refund is a completed outcome, not a fault — money came
+  // in and went back out, and colouring it red reads as something went wrong.
+  REFUNDED: "neutral",
 };
 
 const ORDER_LABEL: Record<string, string> = {
@@ -79,6 +82,7 @@ const ORDER_LABEL: Record<string, string> = {
   PENDING_PAYMENT: "Awaiting payment",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
+  REFUNDED: "Refunded",
 };
 
 export function OrderStatusPill({ status }: { status: string }) {

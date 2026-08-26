@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { events } from "./notifications";
-import { FulfilmentStatus, OrderStatus } from "../generated/prisma/enums";
+import { refundUnfulfillableLine } from "./refunds";
+import { FulfilmentStatus, OrderStatus, RefundStatus } from "../generated/prisma/enums";
 
 /**
  * What a seller has sold, and sending it.
@@ -11,12 +12,33 @@ import { FulfilmentStatus, OrderStatus } from "../generated/prisma/enums";
  * never be told, never see it, and never be able to act on it. The marketplace
  * loop was open at exactly the point where a real transaction begins.
  *
- * ONLY PAID ORDERS COUNT
+ * ONLY ORDERS WHERE MONEY MOVED
  * A seller sees a line once the money has actually moved. Showing them a
  * PENDING_PAYMENT order would have them packing parcels for checkouts that get
  * abandoned — and roughly half of all abandoned carts sit in that state until a
  * sweeper releases them.
+ *
+ * That USED to mean status PAID alone, which was right when PAID was the only
+ * post-payment state. It is not any more: a fully refunded order becomes
+ * REFUNDED, and filtering on PAID made those sales disappear from the seller's
+ * list, their summary, and their totals as though the transaction had never
+ * happened. They need to see it, marked refunded.
+ *
+ * VISIBILITY AND EARNINGS ARE DIFFERENT QUESTIONS
+ * A refunded line is still a sale that happened, so it is visible. It is not
+ * money the seller keeps, so it is excluded from soldCount and grossCents.
+ * Conflating the two would either hide history or inflate earnings, and both
+ * are worse than carrying two filters.
  */
+
+/**
+ * Order states in which the money moved, so the seller has a real sale.
+ *
+ * One constant rather than six copies of the same array: this filter appears in
+ * every seller-facing query, and a single site left on PAID alone is a sale that
+ * silently vanishes from one screen but not the others.
+ */
+const SETTLED = { in: [OrderStatus.PAID, OrderStatus.REFUNDED] };
 
 export class SalesError extends Error {
   code: string;
@@ -71,7 +93,7 @@ type SaleRow = Awaited<ReturnType<typeof fetchSales>>[number];
 
 function fetchSales(sellerId: string, where: object, take: number) {
   return prisma.orderItem.findMany({
-    where: { sellerId, order: { status: OrderStatus.PAID }, ...where },
+    where: { sellerId, order: { status: SETTLED }, ...where },
     // Oldest paid first: the thing waiting longest is the thing to post next.
     orderBy: { order: { paidAt: "asc" } },
     take,
@@ -145,33 +167,79 @@ export async function listSales(
 
 /** Counts for the dashboard tabs, so a seller sees what needs doing. */
 export async function salesSummary(sellerId: string) {
-  const base = { sellerId, order: { status: OrderStatus.PAID } };
+  const base = { sellerId, order: { status: SETTLED } };
 
-  const [toSend, shipped, delivered, revenue] = await Promise.all([
+  const [toSend, shipped, delivered, lines, refundedLineIds] = await Promise.all([
     prisma.orderItem.count({ where: { ...base, fulfilment: FulfilmentStatus.UNFULFILLED } }),
     prisma.orderItem.count({ where: { ...base, fulfilment: FulfilmentStatus.SHIPPED } }),
     prisma.orderItem.count({ where: { ...base, fulfilment: FulfilmentStatus.DELIVERED } }),
-    prisma.orderItem.findMany({ where: base, select: { unitPriceCents: true, quantity: true } }),
+    prisma.orderItem.findMany({
+      where: base,
+      select: { id: true, unitPriceCents: true, quantity: true },
+    }),
+    refundedLines(sellerId),
   ]);
+
+  const kept = lines.filter((l) => !refundedLineIds.has(l.id));
 
   return {
     toSend,
     shipped,
     delivered,
-    soldCount: revenue.length,
     /**
-     * Gross, before any fee. Named so nobody mistakes it for a payout balance
-     * — there is no payout pipeline, and calling this "earnings" would imply
-     * money is waiting somewhere for them.
+     * Refunded lines are counted separately, and left out of the two figures
+     * below.
+     *
+     * A sale whose money went back is not something the seller sold, and it is
+     * certainly not something they earned. Including it would make the totals
+     * on this page disagree with their bank in the one direction nobody wants
+     * to discover late.
      */
-    grossCents: revenue.reduce((sum, r) => sum + r.unitPriceCents * r.quantity, 0),
+    refunded: refundedLineIds.size,
+    soldCount: kept.length,
+    /**
+     * Gross, before any fee, and net of refunds. Named so nobody mistakes it
+     * for a payout balance — there is no payout pipeline, and calling this
+     * "earnings" would imply money is waiting somewhere for them.
+     */
+    grossCents: kept.reduce((sum, r) => sum + r.unitPriceCents * r.quantity, 0),
   };
+}
+
+/**
+ * The seller's line ids that have money going back.
+ *
+ * PENDING counts as refunded. A refund in flight is money leaving; treating it
+ * as still-earned until it settles would show a figure that is about to be
+ * wrong, and the seller would see it drop for no visible reason.
+ */
+async function refundedLines(sellerId: string): Promise<Set<string>> {
+  const rows = await prisma.refund.findMany({
+    where: {
+      status: { in: [RefundStatus.PENDING, RefundStatus.SUCCEEDED] },
+      orderItemId: { not: null },
+      order: { items: { some: { sellerId } } },
+    },
+    select: { orderItemId: true },
+  });
+
+  // Filtered again by seller: the query above matches refunds on any ORDER that
+  // contains one of this seller's lines, which in a multi-seller basket
+  // includes somebody else's refunded line.
+  const ids = rows.map((r) => r.orderItemId!).filter(Boolean);
+  if (ids.length === 0) return new Set();
+
+  const mine = await prisma.orderItem.findMany({
+    where: { id: { in: ids }, sellerId },
+    select: { id: true },
+  });
+  return new Set(mine.map((m) => m.id));
 }
 
 /** One sale, scoped to its seller. */
 export async function getSale(sellerId: string, orderItemId: string) {
   const row = await prisma.orderItem.findFirst({
-    where: { id: orderItemId, sellerId, order: { status: OrderStatus.PAID } },
+    where: { id: orderItemId, sellerId, order: { status: SETTLED } },
     select: saleSelect,
   });
   return row ? serialize(row) : null;
@@ -191,7 +259,7 @@ export async function markShipped(input: {
   trackingNumber?: string | null;
 }) {
   const line = await prisma.orderItem.findFirst({
-    where: { id: input.orderItemId, sellerId: input.sellerId, order: { status: OrderStatus.PAID } },
+    where: { id: input.orderItemId, sellerId: input.sellerId, order: { status: SETTLED } },
     select: { id: true, fulfilment: true },
   });
   if (!line) throw new SalesError("NOT_FOUND", "Sale not found.", 404);
@@ -255,7 +323,7 @@ export async function markDelivered(buyerId: string, orderItemId: string) {
   const line = await prisma.orderItem.findFirst({
     where: {
       id: orderItemId,
-      order: { buyerId, status: OrderStatus.PAID },
+      order: { buyerId, status: SETTLED },
     },
     select: {
       id: true,
@@ -291,7 +359,7 @@ export async function markUnfulfillable(input: {
   reason: string;
 }) {
   const line = await prisma.orderItem.findFirst({
-    where: { id: input.orderItemId, sellerId: input.sellerId, order: { status: OrderStatus.PAID } },
+    where: { id: input.orderItemId, sellerId: input.sellerId, order: { status: SETTLED } },
     select: {
       id: true,
       fulfilment: true,
@@ -303,6 +371,22 @@ export async function markUnfulfillable(input: {
 
   if (line.fulfilment === FulfilmentStatus.DELIVERED) {
     throw new SalesError("ALREADY_DELIVERED", "That's already been delivered.", 409);
+  }
+
+  /**
+   * Already marked, so stop here.
+   *
+   * Without this the second attempt fell through to the refund helper, which
+   * correctly declined to pay twice — but the seller got "Sale not found" from
+   * a later lookup, which is both wrong and alarming. Saying plainly that it is
+   * already done is the honest answer.
+   */
+  if (line.fulfilment === FulfilmentStatus.UNFULFILLABLE) {
+    throw new SalesError(
+      "ALREADY_UNFULFILLABLE",
+      "You've already told the buyer this can't be sent. They've been refunded.",
+      409
+    );
   }
 
   const reason = input.reason.trim();
@@ -319,18 +403,43 @@ export async function markUnfulfillable(input: {
     },
   });
 
+
+  /**
+   * REFUNDED HERE, AUTOMATICALLY.
+   *
+   * The buyer paid for something they will not receive. Nobody should have to
+   * ask for that back — they did their part, and making them chase it is how a
+   * marketplace earns a reputation. This used to return a flag saying a refund
+   * was owed, and nothing settled it.
+   *
+   * Failures do NOT roll back the unfulfillable mark. The item genuinely is not
+   * coming and the buyer needs to know that regardless; a refund that could not
+   * be issued is recorded as a FAILED row for a person to pick up, which is
+   * strictly better than pretending the line is still fulfillable.
+   */
+  let refund: Awaited<ReturnType<typeof refundUnfulfillableLine>> = null;
+  let refundError: string | null = null;
+  try {
+    refund = await refundUnfulfillableLine({ orderItemId: line.id, reason });
+  } catch (err) {
+    refundError = err instanceof Error ? err.message : "The refund could not be issued.";
+    console.error(`[sales] refund failed for order item ${line.id}:`, err);
+  }
+
+  // Told after the attempt, so the wording can reflect what actually happened
+  // rather than what was hoped for.
   void events.orderUnfulfillable({
     buyerUserId: line.order.buyerId,
     itemTitle: line.title,
     orderId: line.order.id,
     reason,
+    refunded: refund !== null,
   });
 
-  /**
-   * NOT REFUNDED HERE. The buyer has paid for something they will not receive,
-   * which is a refund — and refunds are Phase 2. Marking this without saying so
-   * would leave money quietly kept for nothing, so the route returns a flag the
-   * UI states plainly rather than implying the matter is settled.
-   */
-  return { refundOwed: true };
+  return {
+    refunded: refund !== null,
+    refundCents: refund?.amountCents ?? 0,
+    refundStatus: refund?.status ?? null,
+    refundError,
+  };
 }

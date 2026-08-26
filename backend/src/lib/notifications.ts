@@ -5,10 +5,12 @@ import { NotificationType } from "../generated/prisma/enums";
  * Telling people what happened to them.
  *
  * IN-APP ONLY, AND HONEST ABOUT IT
- * There is no email delivery — the mailer writes to the console. So this table
- * is the whole notification system rather than a queue feeding one. When email
- * lands it will read from here rather than replace it, which is why nothing
- * below assumes a delivery channel.
+ * Email delivery exists now (lib/mailer.ts), and nothing here uses it. Mailing
+ * every sale, shipment, and moderation decision needs per-type preferences and
+ * an unsubscribe path first — without those it is the reason someone filters
+ * this domain to spam, and then they stop seeing the ones that matter. This
+ * table remains the source of truth, so adding mail later means reading from
+ * here rather than replacing it. Nothing below assumes a delivery channel.
  *
  * TEXT IS WRITTEN AT CREATION, NOT RENDERED LATER
  * Same reasoning as OrderItem's snapshots. "Cast iron skillet sold" has to keep
@@ -198,14 +200,56 @@ export const events = {
     itemTitle: string;
     orderId: string;
     reason: string;
+    /** Whether the money actually went back. */
+    refunded: boolean;
   }) {
     return notify({
       userId: input.buyerUserId,
       type: NotificationType.ORDER_UNFULFILLABLE,
       title: `${input.itemTitle} can't be sent`,
-      // States the refund position plainly, because refunds are not built and
-      // implying otherwise would be worse than saying nothing.
-      body: `${input.reason} You paid for this — refunds aren't automated yet, so it needs settling with the seller.`,
+      /**
+       * The wording follows what happened, not what was intended.
+       *
+       * This used to say refunds were not automated — true then, false now. The
+       * flag matters because a refund can still fail: telling somebody their
+       * money is back when it is not is worse than telling them nothing, since
+       * they would then find out from their bank rather than from us.
+       */
+      body: input.refunded
+        ? `${input.reason} You've been refunded for it.`
+        : `${input.reason} We couldn't complete your refund automatically — it's been logged and someone will settle it.`,
+      link: `/orders/${input.orderId}`,
+    });
+  },
+
+  /**
+   * Buyer: money has gone back.
+   *
+   * Separate from orderUnfulfillable even though the two usually arrive
+   * together. A refund can also come from a moderator settling a dispute, and
+   * folding it into the "can't send it" message would make that case read as
+   * something it is not.
+   */
+  refundIssued(input: {
+    buyerUserId: string;
+    orderId: string;
+    amountCents: number;
+    currency: string;
+    reason: string;
+  }) {
+    const amount = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: input.currency,
+      maximumFractionDigits: input.amountCents % 100 === 0 ? 0 : 2,
+    }).format(input.amountCents / 100);
+
+    return notify({
+      userId: input.buyerUserId,
+      type: NotificationType.REFUND_ISSUED,
+      title: `${amount} refunded`,
+      // Banks take their own time. Saying "refunded" with no timescale
+      // generates a support message on day two.
+      body: `${input.reason} It can take a few days to appear on your statement.`,
       link: `/orders/${input.orderId}`,
     });
   },

@@ -21,7 +21,14 @@ import {
 import { getOrders, type OrderRow, type Paged } from "@/lib/adminApi";
 import { useDebounced } from "@/lib/useDebounced";
 
-type Status = "ALL" | "PAID" | "PROCESSING" | "PENDING_PAYMENT" | "FAILED" | "CANCELLED";
+type Status =
+  | "ALL"
+  | "PAID"
+  | "PROCESSING"
+  | "PENDING_PAYMENT"
+  | "FAILED"
+  | "CANCELLED"
+  | "REFUNDED";
 
 export default function AdminOrdersPage() {
   return (
@@ -83,6 +90,7 @@ function Orders() {
             { key: "PENDING_PAYMENT", label: "Awaiting payment" },
             { key: "FAILED", label: "Failed" },
             { key: "CANCELLED", label: "Cancelled" },
+            { key: "REFUNDED", label: "Refunded" },
           ]}
         />
         <SearchBox value={q} onChange={setQ} placeholder="Reference, name, or email" />
@@ -132,7 +140,7 @@ function Orders() {
                       </Td>
                       <Td><OrderStatusPill status={o.status} /></Td>
                       <Td className="whitespace-nowrap text-xs text-ink-dim">
-                        {o.status === "PAID"
+                        {o.status === "PAID" || o.status === "REFUNDED"
                           ? `${o.fulfilledLines} / ${o.lines} sent`
                           : "—"}
                       </Td>

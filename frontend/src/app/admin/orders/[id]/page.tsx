@@ -16,7 +16,8 @@ import {
   fullDate,
   money,
 } from "@/components/admin/ui";
-import { getOrder, type OrderDetail } from "@/lib/adminApi";
+import { ApiError } from "@/lib/api";
+import { getOrder, refundOrder, type OrderDetail } from "@/lib/adminApi";
 
 export default function AdminOrderPage() {
   return (
@@ -135,11 +136,14 @@ function OrderView() {
                       )}
                     </Td>
                     <Td>
-                      {/* Fulfilment only means something once the order is paid
-                          for. On a cancelled order "Not sent" reads as a job
-                          somebody still owes, when in fact there is nothing to
-                          send and never was. */}
-                      {order.status === "PAID" ? (
+                      {/* Fulfilment only means something once money moved. On a
+                          cancelled order "Not sent" reads as a job somebody
+                          still owes, when in fact there is nothing to send and
+                          never was.
+                          REFUNDED counts: a refunded order usually got there
+                          BECAUSE the seller marked it unfulfillable, so hiding
+                          that state would hide the reason. */}
+                      {order.status === "PAID" || order.status === "REFUNDED" ? (
                         <>
                           <FulfilmentPill status={i.fulfilment} />
                           {i.shippedAt && (
@@ -239,9 +243,152 @@ function OrderView() {
               stored here, so none can be shown — or leaked.
             </p>
           </Card>
+
+          <RefundPanel order={order} onChanged={load} />
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Refunds already issued, and a form to issue another.
+ *
+ * WHY THE AMOUNT IS TYPED RATHER THAN A "REFUND EVERYTHING" BUTTON
+ * The common dispute is about one line in a basket that spans several sellers.
+ * A one-click full refund is the wrong default there — it takes money from
+ * sellers who did their part. Typing the figure makes the decision explicit,
+ * and the remaining headroom is shown so it does not have to be worked out.
+ */
+function RefundPanel({
+  order,
+  onChanged,
+}: {
+  order: OrderDetail;
+  onChanged: () => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refunds = order.refunds ?? [];
+  const left = order.refundableCents;
+
+  // Typed in whole currency units because that is how a person thinks about
+  // money; converted to minor units at the boundary, where every other amount
+  // in this codebase lives.
+  const cents = Math.round(Number(amount.replace(/[^0-9.]/g, "")) * 100);
+  const valid =
+    Number.isFinite(cents) && cents > 0 && cents <= left && reason.trim().length >= 3;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await refundOrder(order.id, cents, reason);
+      setAmount("");
+      setReason("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "That refund didn't go through.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Refunds">
+      {refunds.length > 0 && (
+        <ul className="divide-y divide-line">
+          {refunds.map((r) => (
+            <li key={r.id} className="px-5 py-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-sm font-medium tabular-nums text-ink">
+                  {money(r.amountCents, r.currency)}
+                </span>
+                <Pill
+                  tone={
+                    r.status === "SUCCEEDED" ? "good" : r.status === "PENDING" ? "warn" : "bad"
+                  }
+                >
+                  {r.status === "SUCCEEDED"
+                    ? "Sent"
+                    : r.status === "PENDING"
+                      ? "In flight"
+                      : "Failed"}
+                </Pill>
+              </div>
+              <p className="mt-1 text-xs text-ink-dim">{r.reason}</p>
+              <p className="mt-0.5 text-[11px] text-ink-dim">
+                {r.trigger === "SELLER_UNFULFILLABLE" ? "Automatic — seller couldn't send" : "Issued here"}
+                {" · "}
+                {fullDate(r.createdAt)}
+              </p>
+              {r.failureReason && (
+                <p className="mt-1 text-[11px] text-clay">{r.failureReason}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="border-t border-line px-5 py-4">
+        {order.status !== "PAID" && order.status !== "REFUNDED" ? (
+          <p className="text-sm text-ink-dim">
+            Nothing to refund — this order was never paid for.
+          </p>
+        ) : left === 0 ? (
+          <p className="text-sm text-ink-dim">
+            Fully refunded. There is nothing left to send back.
+          </p>
+        ) : (
+          <form onSubmit={submit}>
+            <label htmlFor="refund-amount" className="block text-xs text-ink-dim">
+              Amount — {money(left, order.currency)} still refundable
+            </label>
+            <input
+              id="refund-amount"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              disabled={busy}
+              placeholder={(left / 100).toFixed(2)}
+              className="mt-1.5 w-full rounded border border-line bg-paper px-3 py-2 text-sm tabular-nums text-ink outline-none placeholder:text-ink-dim/60 focus:border-gold/50 disabled:opacity-60"
+            />
+
+            <label htmlFor="refund-reason" className="mt-3 block text-xs text-ink-dim">
+              Reason — the buyer sees this
+            </label>
+            <textarea
+              id="refund-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value.slice(0, 1000))}
+              rows={2}
+              disabled={busy}
+              placeholder="Arrived damaged, seller unresponsive."
+              className="mt-1.5 w-full rounded border border-line bg-paper px-3 py-2 text-sm text-ink outline-none placeholder:text-ink-dim/60 focus:border-gold/50 disabled:opacity-60"
+            />
+
+            {error && <p className="mt-2 text-sm text-clay">{error}</p>}
+
+            <button
+              type="submit"
+              disabled={busy || !valid}
+              className="mt-3 w-full rounded border border-clay/40 px-4 py-2.5 text-sm font-semibold text-clay transition hover:bg-clay/10 disabled:opacity-50"
+            >
+              {busy ? "Sending it back…" : "Refund this amount"}
+            </button>
+
+            <p className="mt-2 text-[11px] text-ink-dim">
+              Recorded permanently, with your name against it. Money can take a
+              few days to reach the buyer&apos;s statement.
+            </p>
+          </form>
+        )}
+      </div>
+    </Card>
   );
 }
 

@@ -73,6 +73,29 @@ Enrolment is stored **unconfirmed** until a code proves the authenticator app
 actually holds the secret. A half-finished enrolment that counted would lock
 the account out of its own panel.
 
+### Each code works once
+
+Allowing one 30-second step either side for clock drift means a valid code spans
+about 90 seconds. Left there, the same six digits keep working for that whole
+window — so a code read over a shoulder, or relayed by a proxy that phishes it,
+can be spent a second time by somebody else. The rate limit does not help: a
+single replay is one attempt.
+
+`User.totpLastUsedAt` stores the period whose code was last accepted, and
+anything from that period or earlier is refused. The period start is recorded
+rather than the moment of use, because two codes from one period *are* the same
+code and must compare equal.
+
+Spending it is an atomic conditional UPDATE — the same technique as claiming an
+order for payment ([ADR 0013](0013-payment-provider-seam.md)). Read-then-write
+would let two requests carrying one code both pass the check before either
+wrote. It is a smaller version of the same race that produced five charges for
+one order, and it deserves the same answer.
+
+Enrolment spends a code too. Otherwise the code typed to finish setup stays live
+and can be replayed against the step-up endpoint moments later — the exact
+attack, reached through the one door that was not watching for it.
+
 ### Every action carries a written reason
 
 `ModerationAction` is append-only, mirroring how `KycAttempt` is retained. Each
@@ -92,6 +115,11 @@ on every request rather than trusting the token's claim, so
 `npm run admin:revoke` takes effect on the next request instead of when a
 30-minute token happens to expire. That is one extra query per admin request —
 a trivially small price on a route nobody hits at volume.
+
+**The first sign-in after enrolling needs the next code.** Finishing setup spends
+one, so the digits the app is still showing will be refused. Correct, and
+baffling if unexplained — the sign-in screen says so explicitly rather than
+letting someone conclude their brand-new authenticator is broken.
 
 **Losing the authenticator locks you out.** There are no recovery codes. The
 recovery path is the CLI: revoke and re-grant, which clears the enrolment. This

@@ -74,6 +74,17 @@ export default function AdminGate({
   const { user, loading } = useAuth();
   const [state, setState] = useState<State>({ kind: "loading" });
 
+  /**
+   * Set when enrolment has just finished, so the sign-in screen can warn about
+   * the one confusing case.
+   *
+   * Codes are single-use, and finishing setup spends one. Someone who enrols
+   * and then types the digits their app is *still showing* would be refused
+   * with "That didn't work" — correct, and baffling, since the app is showing
+   * exactly what was asked for. One sentence prevents that.
+   */
+  const [justEnrolled, setJustEnrolled] = useState(false);
+
   useEffect(() => {
     if (!loading && !user) router.push("/login");
   }, [loading, user, router]);
@@ -142,11 +153,20 @@ export default function AdminGate({
   }
 
   if (state.kind === "setup") {
-    return <Plain><TotpSetup onDone={check} /></Plain>;
+    return (
+      <Plain>
+        <TotpSetup
+          onDone={() => {
+            setJustEnrolled(true);
+            check();
+          }}
+        />
+      </Plain>
+    );
   }
 
   if (state.kind === "locked") {
-    return <Plain><StepUp onDone={check} /></Plain>;
+    return <Plain><StepUp onDone={check} justEnrolled={justEnrolled} /></Plain>;
   }
 
   return (
@@ -306,7 +326,13 @@ function TotpSetup({ onDone }: { onDone: () => void }) {
   );
 }
 
-function StepUp({ onDone }: { onDone: () => void }) {
+function StepUp({
+  onDone,
+  justEnrolled = false,
+}: {
+  onDone: () => void;
+  justEnrolled?: boolean;
+}) {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -335,6 +361,13 @@ function StepUp({ onDone }: { onDone: () => void }) {
         Being signed in to Kintsugi isn&apos;t enough to open this. Confirm your
         password and a code from your authenticator app.
       </p>
+
+      {justEnrolled && (
+        <p className="mt-4 rounded-xl border border-gold/30 bg-gold/5 px-4 py-3 text-sm text-ink">
+          Two-factor is set up. Each code works once, and finishing setup used
+          the one your app is showing now — <strong>wait for the next one</strong>.
+        </p>
+      )}
 
       {error && (
         <p className="mt-5 rounded-xl border border-clay/30 bg-clay/10 px-4 py-3 text-sm text-clay">

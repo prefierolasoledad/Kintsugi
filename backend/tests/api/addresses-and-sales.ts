@@ -258,8 +258,13 @@ void main(
       orderItemId: sellerOfSecond.id,
       reason: "Broke while I was packing it, sorry.",
     });
-    t.check(result.refundOwed === true,
-      "marking it unfulfillable flags that a refund is owed, rather than quietly keeping the money");
+    // Refunds are now issued in the same operation. This used to assert a
+    // `refundOwed` flag, which was all the code could honestly offer at the
+    // time. The refund path itself is covered in depth by api/refunds.ts.
+    t.check(result.refunded === true,
+      "marking it unfulfillable refunds the buyer, rather than quietly keeping the money",
+      JSON.stringify(result));
+    t.check(result.refundCents > 0, "for a non-zero amount", result.refundCents);
 
     const buyerSees = await buyer.get(`/api/orders/${o2.id}`);
     t.check(buyerSees.json.order.items[0].fulfilment === "UNFULFILLABLE",

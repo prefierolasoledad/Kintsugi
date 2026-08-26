@@ -6,7 +6,13 @@ import {
   markOrderPaid,
   releaseOrder,
 } from "../lib/orders";
-import { PAYMENT_EVENTS, readPaymentEvent } from "../lib/paymentProvider";
+import {
+  PAYMENT_EVENTS,
+  REFUND_EVENTS,
+  readPaymentEvent,
+  readRefundEvent,
+} from "../lib/paymentProvider";
+import { settleRefundFromProvider } from "../lib/refunds";
 import { interpret } from "../lib/kycProvider";
 import { StripeConfigError, verifyStripeWebhook } from "../lib/stripeClient";
 import { applyDecision, cancelAttempt } from "../lib/verification";
@@ -63,6 +69,9 @@ webhooksRouter.post(
       if (PAYMENT_EVENTS.includes(event.type)) {
         return await handlePayment(event, res);
       }
+      if (REFUND_EVENTS.includes(event.type)) {
+        return await handleRefund(event, res);
+      }
       if (event.type.startsWith("identity.verification_session.")) {
         return await handleIdentity(event, res);
       }
@@ -99,6 +108,49 @@ async function handlePayment(event: Stripe.Event, res: import("express").Respons
   }
 
   return res.status(200).json({ received: true });
+}
+
+/**
+ * Refund results.
+ *
+ * Most refunds settle inside the original request — Stripe answers immediately
+ * in test mode — and this endpoint then has nothing to do. It exists for the
+ * ones that do not: a refund can come back `pending` and be decided minutes
+ * later, and without this the row would stay PENDING for ever, with the buyer
+ * told their money was on its way and the headroom held against the order.
+ *
+ * A refusal matters as much as a success here. The headroom reserved when the
+ * refund was requested has to be released, or the order permanently believes
+ * money went out that never did.
+ */
+async function handleRefund(event: Stripe.Event, res: import("express").Response) {
+  const parsed = readRefundEvent(event);
+  if (!parsed.outcome || !parsed.refundId) {
+    return res.status(200).json({ received: true, ignored: event.type });
+  }
+
+  const applied = await settleRefundFromProvider({
+    providerRefundId: parsed.refundId,
+    outcome: parsed.outcome,
+  });
+
+  if (!applied.applied) {
+    /**
+     * None of these is an error, and none should be retried.
+     *
+     * NOT_FOUND      a refund from another environment sharing this account.
+     * ALREADY_SETTLED the synchronous path, or an earlier delivery, got there
+     *                 first — the idempotency guarantee working.
+     * STILL_PENDING   Stripe telling us it is still thinking.
+     */
+    if (applied.reason === "NOT_FOUND") {
+      console.warn(`Refund webhook for unknown refund ${parsed.refundId}`);
+    }
+    return res.status(200).json({ received: true, ignored: applied.reason });
+  }
+
+  console.log(`Refund ${applied.refundId} settled as ${applied.status} via ${event.type}`);
+  return res.status(200).json({ received: true, status: applied.status });
 }
 
 /**

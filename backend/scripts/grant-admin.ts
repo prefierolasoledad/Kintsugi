@@ -52,7 +52,7 @@ async function list() {
 async function setRole(email: string, role: "ADMIN" | "USER") {
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, email: true, name: true, role: true },
+    select: { id: true, email: true, name: true, role: true, totpConfirmedAt: true },
   });
 
   if (!user) {
@@ -66,7 +66,26 @@ async function setRole(email: string, role: "ADMIN" | "USER") {
     return;
   }
 
-  await prisma.user.update({ where: { id: user.id }, data: { role } });
+  /**
+   * Revoking also clears the two-factor enrolment.
+   *
+   * This is the documented way out of a lost authenticator: revoke, re-grant,
+   * enrol again. Without the clear it is not a way out at all — the secret
+   * survives, /admin/totp/setup answers ALREADY_ENROLLED, and the account can
+   * never open the panel again. Both the ADR and that endpoint's own error
+   * message promised this behaviour before the code did it.
+   *
+   * Safe to clear because the secret has exactly one use, which is the admin
+   * panel. Losing the role means losing the only thing it unlocked.
+   */
+  const clearTotp = role === "USER";
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: clearTotp
+      ? { role, totpSecret: null, totpConfirmedAt: null, totpLastUsedAt: null }
+      : { role },
+  });
 
   // Loud on purpose: this should be visible in whatever captures stdout.
   console.log("");
@@ -84,6 +103,11 @@ async function setRole(email: string, role: "ADMIN" | "USER") {
     console.log("");
     console.log("  Signing in normally does NOT open the admin panel.");
     console.log("  They must re-authenticate at /admin — a separate, short-lived session.");
+    console.log("  First visit will ask them to enrol an authenticator app.");
+  } else if (clearTotp && user.totpConfirmedAt) {
+    console.log("");
+    console.log("  Their two-factor enrolment was cleared.");
+    console.log("  Granting admin again will start enrolment from scratch.");
   }
   console.log("");
 }

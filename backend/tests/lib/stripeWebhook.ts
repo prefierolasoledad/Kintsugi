@@ -70,3 +70,18 @@ export function sendForged(type: string, object: Record<string, unknown>) {
 export function identitySession(id: string, extra: Record<string, unknown> = {}) {
   return { object: "identity.verification_session", id, ...extra };
 }
+
+/**
+ * A Stripe Refund object, as the refund events carry it.
+ *
+ * `status` is the whole point: succeeded, failed, canceled, pending, or
+ * requires_action. The handler maps canceled onto failed, so both have to be
+ * reachable from a test.
+ */
+export function refundObject(
+  id: string,
+  status: "succeeded" | "failed" | "canceled" | "pending" | "requires_action",
+  extra: Record<string, unknown> = {}
+) {
+  return { object: "refund", id, status, ...extra };
+}

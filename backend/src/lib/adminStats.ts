@@ -1,5 +1,10 @@
 import { prisma } from "./prisma";
-import { OrderStatus, ListingStatus, ReportStatus } from "../generated/prisma/enums";
+import {
+  OrderStatus,
+  ListingStatus,
+  RefundStatus,
+  ReportStatus,
+} from "../generated/prisma/enums";
 
 /**
  * Read-only queries behind the admin dashboard.
@@ -118,18 +123,39 @@ async function dailySeries(days: number) {
   return series;
 }
 
+/**
+ * Money sent back in a window.
+ *
+ * PENDING counts alongside SUCCEEDED. A refund in flight is money leaving, and
+ * excluding it would show a figure that is about to be wrong. FAILED does not
+ * count — that money never left.
+ */
+async function refundedBetween(from: Date, to: Date): Promise<number> {
+  const agg = await prisma.refund.aggregate({
+    where: {
+      status: { in: [RefundStatus.PENDING, RefundStatus.SUCCEEDED] },
+      createdAt: { gte: from, lt: to },
+    },
+    _sum: { amountCents: true },
+  });
+  return agg._sum.amountCents ?? 0;
+}
+
 export async function metrics(days: Range) {
   const now = new Date();
   const periodStart = daysAgo(days - 1);
   const priorStart = daysAgo(days * 2 - 1);
 
-  const [current, prior, series, newUsers, priorNewUsers] = await Promise.all([
-    totalsBetween(periodStart, now),
-    totalsBetween(priorStart, periodStart),
-    dailySeries(days),
-    prisma.user.count({ where: { createdAt: { gte: periodStart } } }),
-    prisma.user.count({ where: { createdAt: { gte: priorStart, lt: periodStart } } }),
-  ]);
+  const [current, prior, series, newUsers, priorNewUsers, refunded, priorRefunded] =
+    await Promise.all([
+      totalsBetween(periodStart, now),
+      totalsBetween(priorStart, periodStart),
+      dailySeries(days),
+      prisma.user.count({ where: { createdAt: { gte: periodStart } } }),
+      prisma.user.count({ where: { createdAt: { gte: priorStart, lt: periodStart } } }),
+      refundedBetween(periodStart, now),
+      refundedBetween(priorStart, periodStart),
+    ]);
 
   // Average order value, in cents. Guarded because a period with no orders
   // would otherwise divide by zero and render NaN on the dashboard.
@@ -143,11 +169,22 @@ export async function metrics(days: Range) {
     buyers: current.buyers,
     aovCents: aov,
     newUsers,
+    /**
+     * Shown alongside gross rather than subtracted from it.
+     *
+     * A fully refunded order leaves the PAID set and drops out of gross on its
+     * own. A PARTLY refunded one stays PAID, so its whole subtotal is still
+     * counted — which would quietly overstate the figure. Reporting both lets
+     * the reader do the subtraction knowingly instead of being handed a net
+     * number that hides how much came back.
+     */
+    refundedCents: refunded,
     deltas: {
       gross: delta(current.grossCents, prior.grossCents),
       orders: delta(current.orders, prior.orders),
       aov: delta(aov, priorAov),
       newUsers: delta(newUsers, priorNewUsers),
+      refunded: delta(refunded, priorRefunded),
     },
     series,
   };

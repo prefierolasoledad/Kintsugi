@@ -301,6 +301,21 @@ Enforced in the application layer unless noted:
     it rather than being sent off to buy it.
 15. Fulfilment only advances `UNFULFILLED → SHIPPED → DELIVERED`, and only on
     `PAID` orders. `DELIVERED` is set by the **buyer**, never the seller.
+16. **`Order.refundedCents` never exceeds `subtotalCents`** — enforced by the
+    conditional UPDATE that reserves headroom before any refund is issued, not
+    by a check constraint, because the guard has to run *before* the provider
+    call rather than reject the write afterwards.
+17. The sum of a refund's `SUCCEEDED` and `PENDING` rows equals its order's
+    `refundedCents`. `FAILED` rows are excluded and their headroom released, so
+    a refused refund leaves no phantom reservation behind.
+18. `Order.status = REFUNDED` iff `refundedCents >= subtotalCents`. A partly
+    refunded order stays `PAID`, which is why there is no
+    `PARTIALLY_REFUNDED` state to keep in step.
+19. At most one `SUCCEEDED` or `PENDING` refund per `orderItemId` for the
+    automatic path, so a seller re-marking a line cannot refund it twice.
+20. A `Refund` row is append-only apart from `status` moving off `PENDING`, and
+    `providerRefundId` is unique — which is what makes webhook redelivery
+    idempotent.
 
 ## Migrations
 
@@ -314,6 +329,9 @@ Enforced in the application layer unless noted:
 | `add_kyc_attempts` | `kyc_attempts` |
 | `add_user_avatar` | `users.avatarUrl` |
 | `add_reservations` | `reservations`, `ReservationStatus`, partial unique index |
+| … | *(orders, wishlist, addresses, notifications, moderation, admin TOTP)* |
+| `add_totp_replay_protection` | `users.totpLastUsedAt` |
+| `add_refunds` | `refunds`, `RefundStatus`, `RefundTrigger`, `orders.refundedCents`, `NotificationType.REFUND_ISSUED` |
 
 ```bash
 npx prisma migrate dev --name <name>   # create + apply

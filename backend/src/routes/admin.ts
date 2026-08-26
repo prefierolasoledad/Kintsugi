@@ -14,7 +14,7 @@ import {
   setAdminCookie,
   stepUp,
   totpEnrolment,
-  verifyTotp,
+  verifyAndSpendTotp,
 } from "../lib/adminAuth";
 import {
   ModerationError,
@@ -28,6 +28,7 @@ import {
   restoreListing,
   suspendUser,
 } from "../lib/moderation";
+import { RefundError, issueRefund, refundableCents, refundsForOrder } from "../lib/refunds";
 import {
   attention,
   customerDetail,
@@ -50,7 +51,11 @@ import {
 export const adminRouter = Router();
 
 function fail(res: import("express").Response, err: unknown, fallback: string) {
-  if (err instanceof AdminAuthError || err instanceof ModerationError) {
+  if (
+    err instanceof AdminAuthError ||
+    err instanceof ModerationError ||
+    err instanceof RefundError
+  ) {
     return res.status(err.status).json({ error: err.message, code: err.code });
   }
   console.error(fallback, err);
@@ -177,7 +182,15 @@ adminRouter.post("/totp/confirm", requireAuth, async (req, res) => {
       return res.status(409).json({ error: "Already set up.", code: "ALREADY_ENROLLED" });
     }
 
-    if (!verifyTotp(user.totpSecret, parsed.data.code)) {
+    /**
+     * Enrolment spends the code too.
+     *
+     * Otherwise the code typed to finish setup would still be live, and could
+     * be replayed seconds later against the step-up endpoint to open the panel
+     * — which is the exact replay this protection exists to stop, reached
+     * through the one door that was not watching for it.
+     */
+    if (!(await verifyAndSpendTotp(user.id, user.totpSecret, parsed.data.code))) {
       return res.status(400).json({ error: "That code isn't right.", code: "BAD_CODE" });
     }
 
@@ -311,7 +324,9 @@ adminRouter.get("/metrics", async (req, res) => {
 adminRouter.get("/orders", async (req, res) => {
   try {
     const status = z
-      .enum(["ALL", "PENDING_PAYMENT", "PROCESSING", "PAID", "FAILED", "CANCELLED"])
+      // REFUNDED included, or .catch("ALL") would silently answer a "show me
+      // refunded orders" request with every order on the site.
+      .enum(["ALL", "PENDING_PAYMENT", "PROCESSING", "PAID", "FAILED", "CANCELLED", "REFUNDED"])
       .catch("ALL")
       .parse(req.query.status ?? "ALL");
     res.json(
@@ -330,9 +345,53 @@ adminRouter.get("/orders/:id", async (req, res) => {
   try {
     const order = await orderDetail(req.params.id);
     if (!order) return res.status(404).json({ error: "No such order.", code: "NOT_FOUND" });
-    res.json({ order });
+    const refunds = await refundsForOrder(order.id);
+    res.json({ order: { ...order, refunds, refundableCents: await refundableCents(order.id) } });
   } catch (err) {
     fail(res, err, "Could not load that order.");
+  }
+});
+
+const refundBody = z.object({
+  /**
+   * Minor units. Required rather than defaulted to the whole order: a moderator
+   * refunding "everything" should have to say so, because the common dispute is
+   * about one line in a basket that spans several sellers.
+   */
+  amountCents: z.number().int().positive(),
+  reason: z.string().trim().min(3).max(1000),
+  orderItemId: z.string().uuid().nullish(),
+});
+
+/**
+ * Refunds part or all of an order, by hand.
+ *
+ * The automatic path is a seller marking a line unfulfillable. This is the
+ * other half: a dispute a person has to settle. It goes through the same
+ * issueRefund(), so the over-refund guard and the idempotency key are identical
+ * — an admin-issued refund has no special privileges over the arithmetic.
+ */
+adminRouter.post("/orders/:id/refund", async (req, res) => {
+  try {
+    const parsed = refundBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Give an amount and a reason. The buyer sees the reason.",
+        code: "INVALID_INPUT",
+      });
+    }
+
+    const refund = await issueRefund({
+      orderId: req.params.id,
+      orderItemId: parsed.data.orderItemId ?? null,
+      amountCents: parsed.data.amountCents,
+      reason: parsed.data.reason,
+      trigger: "ADMIN",
+      initiatedById: req.adminId!,
+    });
+    res.json({ refund });
+  } catch (err) {
+    fail(res, err, "Could not issue that refund.");
   }
 });
 

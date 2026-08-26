@@ -1,5 +1,5 @@
-import { generateSync } from "otplib";
 import { WEB, prisma, requireCatalog, requireServices } from "../lib/db";
+import { currentCode, freshCode } from "../lib/totp";
 import { PASSWORD, Scope, buyOne } from "../lib/fixtures";
 import { brokenImages, login, openBrowser, realFailures } from "../lib/browser";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
@@ -181,7 +181,7 @@ void main(
         t.check(!!secret, "and a secret was stored");
         await adminBrowser.shot("5-qr");
 
-        await adminBrowser.page.fill("#setup-code", generateSync({ secret }));
+        await adminBrowser.page.fill("#setup-code", currentCode(secret));
         await adminBrowser.page.getByRole("button", { name: /^confirm$/i }).click();
         await adminBrowser.page.waitForTimeout(2500);
 
@@ -192,6 +192,13 @@ void main(
         t.check(/isn['’]t enough/i.test(stepUp),
           "with the page saying being signed in isn't enough");
 
+        // Codes are single-use, so the one that finished setup is spent. The
+        // page has to say so, or the next screen refuses the digits the
+        // authenticator app is visibly still displaying.
+        t.check(/wait for the next one/i.test(stepUp),
+          "and warning that the code just used to enrol is spent",
+          stepUp.slice(0, 200).replace(/\n/g, " | "));
+
         // Password alone must not open it.
         await adminBrowser.page.fill("#admin-password", PASSWORD);
         await adminBrowser.page.fill("#admin-code", "000000");
@@ -201,7 +208,7 @@ void main(
           "the right password with a wrong code is refused");
 
         await adminBrowser.page.fill("#admin-password", PASSWORD);
-        await adminBrowser.page.fill("#admin-code", generateSync({ secret }));
+        await adminBrowser.page.fill("#admin-code", await freshCode(secret));
         await adminBrowser.page.getByRole("button", { name: /open the admin panel/i }).click();
         await adminBrowser.page.waitForTimeout(3000);
 

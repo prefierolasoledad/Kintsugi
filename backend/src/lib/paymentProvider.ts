@@ -67,6 +67,19 @@ export type PaymentOutcome =
   /** Not resolved yet — 3-D Secure, or an async method. Not terminal. */
   | { status: "pending"; intentId: string; reason: string };
 
+/**
+ * The result of asking the provider to send money back.
+ *
+ * Mirrors PaymentOutcome, and "pending" is here for the same reason: a refund
+ * that has been accepted but not settled is neither done nor failed, and
+ * collapsing it into either is how a buyer gets told their money is back before
+ * it is.
+ */
+export type RefundOutcome =
+  | { status: "succeeded"; refundId: string }
+  | { status: "failed"; refundId: string | null; reason: string }
+  | { status: "pending"; refundId: string };
+
 export class PaymentError extends Error {
   /** True when we genuinely do not know whether the card was charged. */
   indeterminate: boolean;
@@ -604,6 +617,158 @@ export function readPaymentEvent(event: Stripe.Event): PaymentEvent {
             intentId: intent.id,
             reason: intent.last_payment_error?.message ?? "The payment didn't complete.",
           },
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Refunds
+ * ------------------------------------------------------------------ */
+
+/**
+ * Sends money back against a payment that already succeeded.
+ *
+ * IDEMPOTENCY KEY IS DERIVED FROM THE REFUND ROW, NEVER RANDOM
+ * Same rule as createIntent, and it matters more here. The caller has already
+ * committed a Refund row and incremented Order.refundedCents before this is
+ * called; if the network dies mid-request and the retry used a fresh key,
+ * Stripe would issue a SECOND refund for money the books say has already gone
+ * back. Keyed on the row id, the retry returns the first refund.
+ *
+ * Partial amounts are supported because that is the normal case: one seller in
+ * a multi-seller basket failing to post their line refunds that line only.
+ */
+export async function refundIntent(input: {
+  paymentIntentId: string;
+  amountCents: number;
+  /** Must be stable across retries. Use the Refund row's id. */
+  idempotencyKey: string;
+}): Promise<RefundOutcome> {
+  assertKnownProvider();
+
+  if (!Number.isInteger(input.amountCents) || input.amountCents < 1) {
+    throw new PaymentError("Refund amount must be a positive whole number of minor units.");
+  }
+
+  if (PAYMENT_PROVIDER === "stub") {
+    const intent = stubIntents.get(input.paymentIntentId);
+
+    // A stub restart forgets its intents. Treated as indeterminate rather than
+    // failed: in a real provider the charge would still exist, and reporting a
+    // definite failure would let the caller wrongly conclude no money moved.
+    if (!intent) {
+      throw new PaymentError(
+        "The stub provider has no record of that payment (it restarts empty).",
+        true
+      );
+    }
+    if (intent.status !== "succeeded") {
+      throw new PaymentError("That payment did not succeed, so there is nothing to refund.");
+    }
+
+    const seen = stubIdempotency.get(input.idempotencyKey);
+    if (seen) return { status: "succeeded", refundId: seen };
+
+    const refundId = `re_stub_${input.idempotencyKey.replace(/-/g, "").slice(0, 20)}`;
+    stubIdempotency.set(input.idempotencyKey, refundId);
+    return { status: "succeeded", refundId };
+  }
+
+  try {
+    const refund = await stripe().refunds.create(
+      {
+        payment_intent: input.paymentIntentId,
+        amount: input.amountCents,
+      },
+      { idempotencyKey: `refund:${input.idempotencyKey}` }
+    );
+
+    // Stripe's refund statuses: succeeded, pending, failed, canceled,
+    // requires_action. Anything not terminal-good is reported honestly rather
+    // than optimistically.
+    if (refund.status === "succeeded") {
+      return { status: "succeeded", refundId: refund.id };
+    }
+    if (refund.status === "failed" || refund.status === "canceled") {
+      return {
+        status: "failed",
+        refundId: refund.id,
+        reason: refund.failure_reason ?? "The provider could not complete the refund.",
+      };
+    }
+    return { status: "pending", refundId: refund.id };
+  } catch (err) {
+    // Mutating: a dropped connection may have issued the refund anyway.
+    return translateStripeError(err, true);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Refund events
+ * ------------------------------------------------------------------ */
+
+/**
+ * The refund events worth listening to.
+ *
+ * All four carry a Refund object as `data.object`, so one parser handles them.
+ *
+ * `charge.refunded` is DELIBERATELY ABSENT. It fires alongside these but
+ * carries a Charge, whose `refunds` list would need separate unwrapping — two
+ * code paths for one fact, and the second one only ever agreeing with the
+ * first. The refund-object events already say everything needed.
+ */
+export const REFUND_EVENTS = [
+  "refund.created",
+  "refund.updated",
+  "refund.failed",
+  "charge.refund.updated",
+];
+
+export type RefundEvent = {
+  id: string;
+  type: string;
+  /** The provider's refund id, which is how we find our own row. */
+  refundId: string;
+  /** Null for an event we recognise but which decides nothing. */
+  outcome: RefundOutcome | null;
+};
+
+export function readRefundEvent(event: Stripe.Event): RefundEvent {
+  if (!REFUND_EVENTS.includes(event.type)) {
+    return { id: event.id, type: event.type, refundId: "", outcome: null };
+  }
+
+  const refund = event.data.object as Stripe.Refund;
+
+  /**
+   * Stripe's refund statuses are pending, requires_action, succeeded, failed
+   * and canceled.
+   *
+   * `canceled` is grouped with failed on purpose: in both cases the money did
+   * not go back, and the caller has to release the headroom it reserved. A
+   * cancelled refund treated as still-pending would hold that reservation for
+   * ever and block a legitimate retry.
+   */
+  if (refund.status === "succeeded") {
+    return { id: event.id, type: event.type, refundId: refund.id, outcome: { status: "succeeded", refundId: refund.id } };
+  }
+  if (refund.status === "failed" || refund.status === "canceled") {
+    return {
+      id: event.id,
+      type: event.type,
+      refundId: refund.id,
+      outcome: {
+        status: "failed",
+        refundId: refund.id,
+        reason: refund.failure_reason ?? `The provider reported the refund as ${refund.status}.`,
+      },
+    };
+  }
+  // pending / requires_action: still in flight, nothing to apply yet.
+  return {
+    id: event.id,
+    type: event.type,
+    refundId: refund.id,
+    outcome: { status: "pending", refundId: refund.id },
   };
 }
 

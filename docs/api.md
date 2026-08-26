@@ -74,8 +74,16 @@ must be verified first.
 Signing up again on an *unverified* email is not an error: it re-sends the link
 and updates the stored password hash.
 
-> With no email provider configured, the verification link is printed to the
-> backend console.
+> Delivery is controlled by `MAIL_TRANSPORT` (nodemailer):
+> `console` (default) prints the link to the backend terminal and sends nothing;
+> `ethereal` really sends to a throwaway inbox and logs a URL where the rendered
+> message can be read; `smtp` uses a real server and the process refuses to
+> start unless `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` are all set.
+>
+> A send failure does **not** fail the signup — the account and token are already
+> committed, so a transient SMTP error would otherwise 500 an account that
+> exists. It is logged loudly instead, and the recovery path is
+> `POST /auth/resend-verification`.
 
 ### `POST /auth/verify-email`
 
@@ -533,6 +541,27 @@ whole order.
 Claims the order atomically before contacting the provider. Concurrent calls get
 `409 PAYMENT_IN_PROGRESS` or `409 ALREADY_PAID` — never a second charge.
 
+### `GET /orders/refunds` 🔒
+
+Every refund this buyer has received, newest first (max 100).
+
+```json
+{ "refunds": [ {
+  "id": "…", "amountCents": 3200, "currency": "USD",
+  "status": "SUCCEEDED", "trigger": "SELLER_UNFULFILLABLE",
+  "reason": "Cracked while I was packing it.",
+  "createdAt": "…", "completedAt": "…",
+  "orderId": "…", "orderReference": "KIN-W9ABBM",
+  "itemTitle": "Cast iron skillet"
+} ] }
+```
+
+Declared **before** `/:id` in the router — Express matches in order, so swapped
+it would read as an order whose id is the string `refunds`.
+
+`itemTitle` comes from the line's snapshot, so it survives the listing being
+deleted — a likely outcome for something a seller could not send.
+
 ### `POST /orders/:id/cancel`
 Only while `PENDING_PAYMENT`. A `PROCESSING` order returns
 `409 PAYMENT_IN_PROGRESS`, because returning stock while a charge may complete
@@ -677,6 +706,19 @@ rather than when the token expires.
 A wrong password and a wrong code return the **same** message. Distinguishing
 them would tell an attacker which half they had already solved.
 
+**Codes are single-use.** A valid code spans about 90 seconds here, because one
+30-second step either side is accepted for clock drift — so without this the
+same six digits keep working for that whole window, and a code seen over a
+shoulder or relayed by a phishing proxy can be spent again by someone else.
+`User.totpLastUsedAt` records the period last accepted, and anything from that
+period or earlier is refused with the same generic message. The claim is an
+atomic conditional UPDATE, so two requests carrying the same code cannot both
+win a read-then-write race.
+
+One consequence worth knowing: finishing enrolment spends a code, so the very
+next step-up needs the *next* one. The panel says so rather than letting someone
+retype the digits their app is still displaying.
+
 ### Dashboard — all read-only
 
 | Route | Returns |
@@ -728,9 +770,14 @@ state.
 Signature-verified, raw body, mounted **before** `express.json()` — Stripe signs
 the exact bytes, so a parsed and re-serialised body fails every time.
 
-Handles `payment_intent.*` and `identity.verification_session.*`. Note that
-`requires_input` means both "hasn't started" and "was refused"; only
-`last_error` separates them.
+Handles `payment_intent.*`, `refund.*` / `charge.refund.updated`, and
+`identity.verification_session.*`. Note that `requires_input` means both
+"hasn't started" and "was refused"; only `last_error` separates them.
+
+`charge.refunded` is deliberately **not** handled. It fires alongside the
+refund-object events but carries a Charge, whose `refunds` list would need
+separate unwrapping — two code paths for one fact, the second only ever
+agreeing with the first.
 
 Unknown events and unknown ids return **200**, because a non-2xx tells Stripe to
 retry forever.

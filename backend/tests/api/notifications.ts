@@ -1,5 +1,5 @@
 import { prisma, requireCatalog, requireServices } from "../lib/db";
-import { Scope, buyOne, checkoutOne } from "../lib/fixtures";
+import { awaitNotifications, buyOne, checkoutOne, Scope } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
 
 /**
@@ -221,12 +221,35 @@ void main(
       reason: "It broke while I was packing it.",
     });
 
-    const cannot = await buyer.get("/api/notifications");
-    const top = cannot.json.notifications[0];
-    t.check(top?.type === "ORDER_UNFULFILLABLE", "buyer told it can't be sent", top?.type);
+    /**
+     * Waited for, and found by type rather than by index.
+     *
+     * One seller action now raises TWO notifications — "can't be sent" and
+     * "refunded" — both fire-and-forget, so neither the ordering nor the timing
+     * is guaranteed. Reading the inbox on the next line passed when run alone
+     * and failed inside a full run, which is the worst of both.
+     */
+    const inbox = await awaitNotifications(scope.emailFor("buyer"), [
+      "ORDER_UNFULFILLABLE",
+      "REFUND_ISSUED",
+    ]);
+    const top = inbox.find((n) => n.type === "ORDER_UNFULFILLABLE");
+    t.check(!!top, "buyer told it can't be sent", inbox.map((n) => n.type).join(", "));
     t.check(/broke while/i.test(top?.body ?? ""), "with the seller's reason", top?.body);
-    t.check(/refunds aren't automated/i.test(top?.body ?? ""),
-      "and says plainly that the refund isn't automatic", top?.body);
+    /**
+     * This used to assert the opposite — that the message admitted refunds were
+     * not automated. That was the honest thing to say when they were not, and
+     * asserting it now would be a test defending the worse behaviour.
+     */
+    t.check(/refunded/i.test(top?.body ?? ""),
+      "and says the money has gone back", top?.body);
+    t.check(!/aren't automated|settling with the seller/i.test(top?.body ?? ""),
+      "rather than telling them to chase the seller themselves", top?.body);
+
+    // The refund notification is a separate event, so it arrives separately.
+    t.check(inbox.some((n) => n.type === "REFUND_ISSUED"),
+      "and a refund notification arrives alongside it",
+      inbox.map((n) => n.type).join(", "));
   },
   async (t) => {
     await scope.cleanup();

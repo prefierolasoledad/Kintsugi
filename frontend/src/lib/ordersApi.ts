@@ -46,6 +46,40 @@ export type ShipTo = {
   phone: string | null;
 };
 
+export type RefundStatus = "PENDING" | "SUCCEEDED" | "FAILED";
+export type RefundTrigger = "SELLER_UNFULFILLABLE" | "ADMIN";
+
+export type Refund = {
+  id: string;
+  /** Null when the whole order was refunded rather than one line. */
+  orderItemId: string | null;
+  amountCents: number;
+  currency: string;
+  status: RefundStatus;
+  trigger: RefundTrigger;
+  /** Shown to the buyer verbatim — the seller's or moderator's own words. */
+  reason: string;
+  failureReason: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+/** A refund as it appears in the buyer's own list, across all their orders. */
+export type MyRefund = {
+  id: string;
+  amountCents: number;
+  currency: string;
+  status: RefundStatus;
+  trigger: RefundTrigger;
+  reason: string;
+  createdAt: string;
+  completedAt: string | null;
+  orderId: string;
+  orderReference: string;
+  /** The line's snapshotted title, so it survives the listing being deleted. */
+  itemTitle: string | null;
+};
+
 export type Order = {
   id: string;
   /** Short, speakable reference for support conversations. */
@@ -61,6 +95,8 @@ export type Order = {
   createdAt: string;
   shipTo: ShipTo | null;
   items: OrderItem[];
+  /** Present on the detail endpoint only; the list has no use for them. */
+  refunds?: Refund[];
 };
 
 export type PaymentOutcome = "succeeded" | "failed" | "pending";
@@ -95,6 +131,11 @@ export function getOrder(orderId: string) {
 }
 
 /** The buyer confirms an item arrived. Deliberately not the seller's call. */
+/** Every refund this buyer has received, newest first. */
+export function getMyRefunds() {
+  return request<{ refunds: MyRefund[] }>("/refunds");
+}
+
 export function confirmDelivery(orderItemId: string) {
   return request<{ ok: true }>(`/items/${orderItemId}/delivered`, { method: "POST" });
 }

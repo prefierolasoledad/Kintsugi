@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { refundsForBuyer, refundsForOrder } from "../lib/refunds";
 import {
   OrderError,
   attachPaymentIntent,
@@ -121,13 +122,31 @@ ordersRouter.get("/", async (req, res) => {
   }
 });
 
+/**
+ * Every refund this buyer has received.
+ *
+ * DECLARED BEFORE "/:id" ON PURPOSE. Express matches in order, so with these
+ * swapped the request would be read as an order whose id is the string
+ * "refunds" and answered with a 404.
+ */
+ordersRouter.get("/refunds", async (req, res) => {
+  try {
+    res.json({ refunds: await refundsForBuyer(req.userId!) });
+  } catch (err) {
+    fail(res, err, "Could not load your refunds.");
+  }
+});
+
 ordersRouter.get("/:id", async (req, res) => {
   try {
     const order = await getOrder(req.userId!, req.params.id);
     if (!order) {
       return res.status(404).json({ error: "Order not found.", code: "NOT_FOUND" });
     }
-    res.json({ order: serialize(order) });
+    // Attached rather than folded into serialize(): the list view has no use
+    // for them, and this is the only place they are read.
+    const refunds = await refundsForOrder(order.id);
+    res.json({ order: { ...serialize(order), refunds } });
   } catch (err) {
     fail(res, err, "Could not load that order.");
   }

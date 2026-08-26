@@ -148,7 +148,18 @@ export async function totpEnrolment(email: string, secret: string) {
   return { uri, qrDataUrl, secret };
 }
 
-export function verifyTotp(secret: string, token: string) {
+/**
+ * Checks a code and reports WHICH 30-second period it belongs to.
+ *
+ * The period matters as much as the verdict. Because one step either side is
+ * accepted, a valid code stays valid for about 90 seconds — long enough for the
+ * same six digits to be submitted twice. Returning the period start lets the
+ * caller record what has been spent and refuse it afterwards.
+ *
+ * Null means invalid. Callers must not treat "not null" as merely truthy
+ * without also doing the replay check.
+ */
+export function verifyTotp(secret: string, token: string): { periodStart: Date } | null {
   try {
     const result = verifySync({
       secret,
@@ -156,10 +167,59 @@ export function verifyTotp(secret: string, token: string) {
       token: token.replace(/\s/g, ""),
       epochTolerance: EPOCH_TOLERANCE,
     });
-    return result.valid === true;
+    if (!result.valid) return null;
+
+    /**
+     * otplib's result type is a union of the TOTP and HOTP shapes, and only the
+     * TOTP one carries `epoch`. This is always TOTP, so the guard never fires —
+     * but it fails CLOSED if that ever stops being true. Without the period we
+     * cannot promise the code is single-use, and accepting it anyway would
+     * reopen the replay window silently.
+     */
+    if (!("epoch" in result) || typeof result.epoch !== "number") return null;
+
+    // `epoch` is the period start in seconds, so two codes from the same
+    // 30-second window produce the same Date — which is the point.
+    return { periodStart: new Date(result.epoch * 1000) };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * Marks a code's period as spent, atomically.
+ *
+ * Returns false if that period was already used. This is a conditional UPDATE
+ * rather than read-then-write for the same reason payment claiming is
+ * (see lib/orders.ts): two requests carrying the same code can both pass a
+ * separate "has this been used?" check before either writes, and then both
+ * proceed. The database decides, once, and exactly one caller wins.
+ */
+async function claimTotpPeriod(userId: string, periodStart: Date): Promise<boolean> {
+  const claimed = await prisma.user.updateMany({
+    where: {
+      id: userId,
+      OR: [{ totpLastUsedAt: null }, { totpLastUsedAt: { lt: periodStart } }],
+    },
+    data: { totpLastUsedAt: periodStart },
+  });
+  return claimed.count === 1;
+}
+
+/**
+ * Verifies a code AND spends it. Use this everywhere a code is accepted.
+ *
+ * Kept as one function so the two halves cannot drift apart — a call site that
+ * verified without spending would silently reopen the replay window.
+ */
+export async function verifyAndSpendTotp(
+  userId: string,
+  secret: string,
+  token: string
+): Promise<boolean> {
+  const match = verifyTotp(secret, token);
+  if (!match) return false;
+  return claimTotpPeriod(userId, match.periodStart);
 }
 
 /* ------------------------------------------------------------------ *
@@ -230,7 +290,14 @@ export async function stepUp(input: {
     );
   }
 
-  if (!verifyTotp(user!.totpSecret, input.totpCode)) refuse();
+  /**
+   * Verify and spend in one step.
+   *
+   * A code that is valid but already spent fails here with the same message as
+   * a wrong one — the attacker replaying it learns only that it did not work,
+   * not that they were one step away and merely too late.
+   */
+  if (!(await verifyAndSpendTotp(user!.id, user!.totpSecret, input.totpCode))) refuse();
 
   return mintAdminToken(user!.id);
 }

@@ -178,10 +178,13 @@ export default function AccountPage() {
               />
               <AccountCard
                 icon={<CancelIcon />}
-                title="My cancellations"
-                description="Cancelled orders and refunds owed."
+                /* Retitled from "My cancellations". The page lists refunds, and
+                   naming it after what it holds beats naming it after the thing
+                   that caused them — most refunds here are a seller unable to
+                   send, not a cancellation. */
+                title="Refunds"
+                description="Money sent back to you, and why."
                 href="/account/cancellations"
-                badge={<PlannedBadge />}
               />
               <AccountCard
                 icon={<CartIcon />}

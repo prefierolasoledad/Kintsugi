@@ -1,5 +1,5 @@
-import { generateSync } from "otplib";
 import { prisma, requireCatalog, requireServices } from "../lib/db";
+import { currentCode, nextPeriod } from "../lib/totp";
 import { web } from "../lib/api";
 import { PASSWORD, Scope } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
@@ -23,10 +23,9 @@ const scope = new Scope("admin");
 wireInterrupt();
 cleanupOnInterrupt(() => scope.cleanup());
 
-/** Generates the code an authenticator app would show right now. */
-function currentCode(secret: string) {
-  return generateSync({ secret });
-}
+// currentCode / nextPeriod live in lib/totp.ts — three suites need them, and
+// single-use codes are exactly the kind of detail that must not be reimplemented
+// slightly differently in each one.
 
 void main(
   "admin panel",
@@ -101,10 +100,30 @@ void main(
     t.check((await admin.post("/api/admin/totp/confirm", { code: "123456" })).status === 400,
       "a wrong code does not confirm it");
 
-    const confirmed = await admin.post("/api/admin/totp/confirm", {
-      code: currentCode(secret),
-    });
+    const enrolCode = currentCode(secret);
+    const confirmed = await admin.post("/api/admin/totp/confirm", { code: enrolCode });
     t.check(confirmed.status === 200, "the right code confirms it", confirmed.status);
+
+    /* ============================================================ *
+     * A code is single-use.
+     *
+     * A valid code lives about 90 seconds here, because one step either side is
+     * allowed for clock drift. Without replay protection those same six digits
+     * keep working for that whole window — so a code seen over a shoulder, or
+     * relayed by a phishing proxy, can be spent a second time by someone else.
+     * ============================================================ */
+    t.section("a code cannot be used twice");
+
+    const replayEnrol = await admin.post("/api/admin/session", {
+      password: PASSWORD,
+      code: enrolCode,
+    });
+    t.check(replayEnrol.status === 401,
+      "the code that finished enrolment cannot then open the panel",
+      `${replayEnrol.status} ${JSON.stringify(replayEnrol.json)}`);
+    t.check(replayEnrol.json.error === "That didn't work.",
+      "and says only that, not 'too late' — which would confirm it was real",
+      replayEnrol.json?.error);
 
     /* ============================================================ *
      * The second claim: password alone is not enough.
@@ -129,14 +148,36 @@ void main(
       "and both failures give the SAME message, so this is not an oracle",
       wrongPassword.json?.error);
 
+    // A fresh window is needed: the enrolment code was spent above, and inside
+    // the same 30 seconds an authenticator app shows the very same digits.
+    await nextPeriod();
+    const goodCode = currentCode(secret);
+
     const stepUp = await admin.post("/api/admin/session", {
       password: PASSWORD,
-      code: currentCode(secret),
+      code: goodCode,
     });
     t.check(stepUp.status === 200 && stepUp.json.active === true, "both together open it",
       `${stepUp.status} ${JSON.stringify(stepUp.json)}`);
     t.check(stepUp.json.expiresInSeconds === 1800, "a thirty-minute session",
       stepUp.json?.expiresInSeconds);
+
+    // The same code, immediately, from a different browser. This is the attack
+    // the column exists for: an observer replaying what they just watched.
+    const replayer = web();
+    await replayer.post("/api/auth/login", {
+      email: scope.emailFor("admin"),
+      password: PASSWORD,
+    });
+    const replayed = await replayer.post("/api/admin/session", {
+      password: PASSWORD,
+      code: goodCode,
+    });
+    t.check(replayed.status === 401,
+      "a code that just worked cannot be replayed elsewhere",
+      `${replayed.status} ${JSON.stringify(replayed.json)}`);
+    t.check((await replayer.get("/api/admin/overview")).status === 401,
+      "so the replayer's panel stays shut");
 
     const overview = await admin.get("/api/admin/overview");
     t.check(overview.status === 200, "the panel opens", overview.status);

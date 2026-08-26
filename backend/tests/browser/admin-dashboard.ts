@@ -1,5 +1,5 @@
-import { generateSync } from "otplib";
 import { WEB, prisma, requireCatalog, requireServices } from "../lib/db";
+import { currentCode, freshCode } from "../lib/totp";
 import { PASSWORD, Scope } from "../lib/fixtures";
 import { brokenImages, login, openBrowser, realFailures } from "../lib/browser";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
@@ -57,12 +57,14 @@ void main(
         .findUniqueOrThrow({ where: { email: adminEmail }, select: { totpSecret: true } })
         .then((u) => u.totpSecret!);
 
-      await h.page.getByLabel(/six-digit code/i).fill(generateSync({ secret }));
+      await h.page.getByLabel(/six-digit code/i).fill(currentCode(secret));
       await h.page.getByRole("button", { name: /confirm/i }).click();
       await h.page.waitForTimeout(2500);
 
+      // Codes are single-use and the one above is now spent. Signing in needs
+      // a genuinely new period, not the same digits the app is still showing.
       await h.page.getByLabel(/^password$/i).fill(PASSWORD);
-      await h.page.getByLabel(/authenticator code/i).fill(generateSync({ secret }));
+      await h.page.getByLabel(/authenticator code/i).fill(await freshCode(secret));
       await h.page.getByRole("button", { name: /open the admin panel/i }).click();
       await h.page.waitForTimeout(3000);
 

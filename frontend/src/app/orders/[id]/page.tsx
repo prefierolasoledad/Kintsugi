@@ -67,6 +67,14 @@ export default function OrderPage() {
 
   const paid = order.status === "PAID";
 
+  // FAILED refunds are listed but must not count toward what came back — the
+  // money never left. PENDING does count: it is on its way and the buyer
+  // should not be told twice that it is owed.
+  const refunds = order.refunds ?? [];
+  const refundedTotal = refunds
+    .filter((r) => r.status !== "FAILED")
+    .reduce((sum, r) => sum + r.amountCents, 0);
+
   return (
     <Shell>
       <Link
@@ -129,6 +137,49 @@ export default function OrderPage() {
             Paid {new Date(order.paidAt).toLocaleString()}
             {order.paymentProvider && ` · via ${order.paymentProvider}`}
           </p>
+        )}
+
+        {/**
+         * Refunds sit under the total, not in a separate card.
+         *
+         * Somebody reading this page wants the arithmetic in one place: this is
+         * what you paid, this is what came back. Putting the refund elsewhere
+         * makes them do the subtraction themselves.
+         */}
+        {refunds.length > 0 && (
+          <div className="mt-5 border-t border-line pt-5">
+            <p className="text-sm font-medium text-ink">Refunded</p>
+            <ul className="mt-2 grid gap-2">
+              {refunds.map((r) => (
+                <li key={r.id} className="text-sm">
+                  <span className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-ink-dim">{r.reason}</span>
+                    <span className="whitespace-nowrap font-medium tabular-nums text-ink">
+                      {r.status === "FAILED" ? "—" : `-${formatPrice(r.amountCents, r.currency)}`}
+                    </span>
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-dim">
+                    {r.status === "SUCCEEDED"
+                      ? "Sent back — allow a few days to show on your statement."
+                      : r.status === "PENDING"
+                        ? "On its way back to you."
+                        : "This refund didn't go through. It's been logged."}
+                  </span>
+                </li>
+              ))}
+            </ul>
+
+            {/* Only shown when it is not the whole order, because otherwise the
+                figure above already says it. */}
+            {refundedTotal > 0 && refundedTotal < order.subtotalCents && (
+              <p className="mt-3 flex items-baseline justify-between border-t border-line pt-3 text-sm">
+                <span className="text-ink-dim">You kept</span>
+                <span className="font-semibold tabular-nums text-ink">
+                  {formatPrice(order.subtotalCents - refundedTotal, order.currency)}
+                </span>
+              </p>
+            )}
+          </div>
         )}
       </div>
 
