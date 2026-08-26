@@ -42,10 +42,11 @@ lib/
   fixtures.ts       accounts and listings, with cleanup that cannot forget
   browser.ts        Playwright helpers
   stripeWebhook.ts  correctly signed webhook delivery
+  totp.ts           single-use authenticator codes
 api/                fast, no browser
 browser/            Playwright
 run.ts              the runner
-payment-safety.ts   the original suite (see "known inconsistency")
+payment-safety.ts   concurrency and reconciliation; slow on purpose
 ```
 
 ## Cleanup is the part that matters
@@ -129,16 +130,31 @@ the thing under test:
 - `browser-cart-badge` waits ~30s for a hold to expire on its own, with no
   reload, to prove the badge re-arms from the server's `nextExpiresAt`.
 
-## Known inconsistency
+## Every suite is on the shared harness
 
-`payment-safety.ts` predates this harness and still carries its own copy of
-`check()` and its own teardown. It passes 44/44 and its cleanup is already
-scoped correctly, so it was left alone rather than risking a working suite for
-consistency. Everything else — 11 suites — is on the shared harness.
+`payment-safety.ts` was the last holdout — its own `check()`, its own Prisma
+client, its own HTTP client, its own teardown. It was left alone twice on the
+grounds that it worked, and it broke twice in the interval, both times in the
+duplicated plumbing rather than in anything it was testing. It is now on
+`Scope` and `Suite` like everything else.
+
+It still talks to the Express API directly rather than through the BFF, via
+`Scope.apiBuyer()`. That is deliberate: most of its cases fire several requests
+at once to prove the claim serialises them, and a proxy hop in front of each one
+spreads them out in time — which makes the race less likely to happen at all. A
+test that can only pass is not measuring anything.
+
+## Authenticator codes are single-use
+
+Any suite that signs in to the admin panel has to cope with this: finishing
+enrolment spends a code, and inside the same 30-second period an authenticator
+app shows the *same* six digits. Use `freshCode()` from `lib/totp.ts` for the
+second entry — `currentCode()` twice in a row fails with "That didn't work" on a
+code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-328 assertions across 12 suites.
+619 assertions across 18 suites.
 
 | Suite | Covers |
 |---|---|

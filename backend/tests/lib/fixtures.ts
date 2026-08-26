@@ -1,4 +1,4 @@
-import { Client, catalog, web } from "./api";
+import { Client, api, catalog, web } from "./api";
 import { prisma } from "./db";
 import type { Suite } from "./harness";
 
@@ -54,9 +54,12 @@ export class Scope {
   /**
    * A signed-in buyer.
    *
-   * Email verification is flipped directly rather than by following a link:
-   * the mailer is a console.log, so there is no inbox to read. That is a real
-   * gap in the product, not a shortcut in the test.
+   * Email verification is flipped directly rather than by following a link.
+   *
+   * Not because it cannot be done — the mailer really sends now — but because
+   * tying 619 assertions to an SMTP round trip and an inbox poll would make the
+   * suite slower and flakier for no coverage gain. The verification flow has
+   * its own tests that exercise the token path properly.
    */
   async buyer(name = "one"): Promise<Client> {
     const email = `${PREFIX}${this.tag}.${name}${DOMAIN}`;
@@ -79,6 +82,39 @@ export class Scope {
     // Checkout needs a delivery address, so every test buyer gets one. Suites
     // that care about the address itself create their own and override it.
     await client.post("/api/addresses", DEFAULT_ADDRESS);
+    return client;
+  }
+
+  /**
+   * A signed-in buyer talking straight to the Express API, not the BFF.
+   *
+   * For the payment-safety suite, which fires several pay requests at once to
+   * prove the claim serialises them. Going through the Next proxy puts a hop
+   * in front of every request, which spreads them out in time and makes the
+   * race it is trying to provoke less likely to happen at all — a test that
+   * can only pass is not measuring anything.
+   *
+   * Paths differ from the BFF ones: the API has no /api prefix.
+   */
+  async apiBuyer(name = "one"): Promise<Client> {
+    const email = `${PREFIX}${this.tag}.${name}${DOMAIN}`;
+    this.emails.add(email);
+
+    await prisma.user.deleteMany({ where: { email } });
+    const client = api();
+    await client.post("/auth/signup", {
+      name: `Test ${name}`,
+      email,
+      password: PASSWORD,
+    });
+    await prisma.user.update({ where: { email }, data: { emailVerified: true } });
+
+    const login = await client.post("/auth/login", { email, password: PASSWORD });
+    if (login.status !== 200) {
+      throw new Error(`could not log in ${email}: ${login.status} ${login.text.slice(0, 120)}`);
+    }
+
+    await client.post("/addresses", DEFAULT_ADDRESS);
     return client;
   }
 
@@ -243,6 +279,43 @@ export class Scope {
           "  Re-run this suite, or reseed with: npx prisma db seed\n"
       );
     }
+  }
+}
+
+/**
+ * Waits for notifications to actually land.
+ *
+ * WHY THIS IS NEEDED, AND WHY IT IS NOT A BUG IN THE APP
+ * notify() is deliberately fire-and-forget: a notification failure must never
+ * fail the sale, refund, or moderation action that raised it. The consequence
+ * is that the rows commit shortly AFTER the call returns.
+ *
+ * A test that reads the inbox on the next line is therefore racing, and it is a
+ * race that usually passes — which is worse than one that never does. It has
+ * bitten three separate suites now, each time reported as a wording bug in a
+ * message that was perfectly correct.
+ *
+ * Polls until every expected type is present, then returns the inbox. Times out
+ * and returns whatever arrived, so the caller's assertion produces a readable
+ * failure rather than a hang.
+ */
+export async function awaitNotifications(
+  email: string,
+  types: string[],
+  timeoutMs = 5000
+): Promise<Array<{ type: string; title: string; body: string | null }>> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const rows = await prisma.notification.findMany({
+      where: { user: { email } },
+      select: { type: true, title: true, body: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const present = new Set(rows.map((r) => r.type));
+    if (types.every((t) => present.has(t as never))) return rows;
+    if (Date.now() >= deadline) return rows;
+    await new Promise((r) => setTimeout(r, 150));
   }
 }
 
