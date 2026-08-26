@@ -201,9 +201,10 @@ export default function AccountPage() {
               <AccountCard
                 icon={<LockIcon />}
                 title="Login & security"
+                href="/account/security"
                 description={
                   user.emailVerified
-                    ? "Your email is confirmed. Password changes aren't built yet."
+                    ? "Change your password and see what's signed in."
                     : "Confirm your email address to secure the account."
                 }
                 badge={

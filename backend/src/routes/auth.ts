@@ -16,6 +16,13 @@ import {
 import { isPasswordBreached } from "../lib/passwordBreach";
 import { issueRefreshToken, revokeRefreshToken, rotateRefreshToken } from "../lib/refreshTokens";
 import { requireAuth } from "../middleware/requireAuth";
+import { checkRateLimit } from "../lib/rateLimit";
+import {
+  PasswordError,
+  changePassword,
+  requestPasswordReset,
+  resetPassword,
+} from "../lib/passwordReset";
 
 export const authRouter = Router();
 
@@ -221,6 +228,177 @@ authRouter.post("/logout", async (req, res) => {
   }
   clearAuthCookies(res);
   res.status(204).end();
+});
+
+/* ================================================================== *
+ * Passwords
+ * ================================================================== */
+
+function failPassword(res: import("express").Response, err: unknown, fallback: string) {
+  if (err instanceof PasswordError) {
+    return res
+      .status(err.status)
+      .json({ error: err.message, code: err.code, ...(err.field ? { field: err.field } : {}) });
+  }
+  console.error(fallback, err);
+  return res.status(500).json({ error: fallback });
+}
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Enter your current password"),
+  newPassword: z.string().min(1, "Enter a new password"),
+});
+
+/**
+ * Change your password while signed in.
+ *
+ * Requires the current password even though the session is already valid — a
+ * stolen cookie must not be enough to take the account permanently.
+ */
+authRouter.post("/password/change", requireAuth, async (req, res) => {
+  try {
+    const parsed = changePasswordSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return res.status(400).json({
+        error: issue?.message ?? "Invalid input",
+        code: "INVALID_INPUT",
+        field: issue?.path[0],
+      });
+    }
+
+    // Rate limited on the CURRENT password check, which is a password oracle
+    // for anyone holding a stolen session and guessing.
+    const limit = checkRateLimit(`password-change:${req.userId}`, 10, 15 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({
+        error: "Too many attempts. Wait a few minutes.",
+        code: "RATE_LIMITED",
+        retryAfterSeconds: limit.retryAfterSeconds,
+      });
+    }
+
+    const result = await changePassword({
+      userId: req.userId!,
+      currentPassword: parsed.data.currentPassword,
+      newPassword: parsed.data.newPassword,
+      // Their own session survives; everything else is revoked.
+      keepRefreshToken: getRefreshTokenCookie(req),
+    });
+
+    res.json({
+      ok: true,
+      otherSessionsEnded: result.otherSessionsEnded,
+      message:
+        result.otherSessionsEnded > 0
+          ? `Password changed. ${result.otherSessionsEnded} other session${
+              result.otherSessionsEnded === 1 ? " was" : "s were"
+            } signed out.`
+          : "Password changed.",
+    });
+  } catch (err) {
+    failPassword(res, err, "Could not change your password.");
+  }
+});
+
+/**
+ * Ask for a reset link.
+ *
+ * Always 200, whether or not the address is registered — anything else is an
+ * account-enumeration oracle. Same reasoning as /auth/resend-verification.
+ */
+authRouter.post("/password/forgot", async (req, res) => {
+  try {
+    const parsed = emailSchema.safeParse(req.body ?? {});
+    // Even a malformed address gets the same answer, so probing with junk
+    // cannot be distinguished from probing with real addresses.
+    if (!parsed.success) {
+      return res.json({ message: "If that address has an account, a reset link is on its way." });
+    }
+
+    /**
+     * Rate limited per address AND per caller.
+     *
+     * Per address, because otherwise this endpoint will mail somebody's inbox
+     * as fast as it can be called — harassment, and a fast route to being
+     * marked as spam. Per IP, because otherwise one caller can do that to a
+     * long list of addresses instead.
+     */
+    const perEmail = checkRateLimit(`forgot:${parsed.data.email}`, 3, 60 * 60 * 1000);
+    const perCaller = checkRateLimit(`forgot-ip:${req.ip}`, 20, 60 * 60 * 1000);
+
+    if (perEmail.allowed && perCaller.allowed) {
+      await requestPasswordReset(parsed.data.email);
+    }
+
+    // Note the response does not change when rate limited either. A 429 here
+    // would say "this address is real and somebody keeps asking".
+    res.json({ message: "If that address has an account, a reset link is on its way." });
+  } catch (err) {
+    // Even a genuine failure answers the same way, and is logged rather than
+    // returned. The alternative leaks which addresses exist via error shape.
+    console.error("Password reset request failed", err);
+    res.json({ message: "If that address has an account, a reset link is on its way." });
+  }
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1, "Missing token"),
+  newPassword: z.string().min(1, "Enter a new password"),
+});
+
+/** Redeem a reset link. Single-use, one hour, and it ends every session. */
+authRouter.post("/password/reset", async (req, res) => {
+  try {
+    const parsed = resetPasswordSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return res.status(400).json({
+        error: issue?.message ?? "Invalid input",
+        code: "INVALID_INPUT",
+        field: issue?.path[0],
+      });
+    }
+
+    /**
+     * A courtesy cap, not a guessing control.
+     *
+     * Tokens are 256 bits of randomness, so this endpoint cannot be brute
+     * forced no matter how many attempts are allowed. Nor is it an expensive
+     * one to abuse: an invalid token costs a SHA-256 and one indexed lookup and
+     * returns before any bcrypt or breach-list call happens. Only a genuine
+     * token reaches the costly work, and a genuine token can be used once.
+     *
+     * So the limit exists to stop somebody hammering the endpoint, and nothing
+     * more. It was 20/hour, which is tight enough to bite a corporate NAT where
+     * many people share one egress address — and, less importantly but more
+     * visibly, tight enough that running the test suite twice in an hour
+     * exhausted it. Raised to a figure that still caps abuse without punishing
+     * shared addresses.
+     */
+    const limit = checkRateLimit(`reset-ip:${req.ip}`, 100, 60 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({ error: "Too many attempts.", code: "RATE_LIMITED" });
+    }
+
+    await resetPassword({
+      token: parsed.data.token,
+      newPassword: parsed.data.newPassword,
+    });
+
+    /**
+     * No session is issued.
+     *
+     * They are sent to the login page to use the password they just chose.
+     * Signing them in directly would mean a reset link is a one-click login,
+     * and links leak — forwarded mail, shared screens, scanners that follow
+     * URLs. Making them type it also confirms they know what they set.
+     */
+    clearAuthCookies(res);
+    res.json({ ok: true, message: "Password changed. Sign in with your new password." });
+  } catch (err) {
+    failPassword(res, err, "Could not reset your password.");
+  }
 });
 
 authRouter.get("/me", requireAuth, async (req, res) => {

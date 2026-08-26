@@ -90,9 +90,20 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="text-sm font-medium text-ink">
-                Password
-              </label>
+              {/* The reset link sits beside the label rather than below the
+                  form. Somebody who has forgotten their password realises it
+                  at this field, not after scrolling past the submit button. */}
+              <div className="flex items-baseline justify-between gap-3">
+                <label htmlFor="password" className="text-sm font-medium text-ink">
+                  Password
+                </label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs text-ink-dim transition hover:text-gold-dim"
+                >
+                  Forgotten it?
+                </Link>
+              </div>
               <input
                 id="password"
                 type="password"

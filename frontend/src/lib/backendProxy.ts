@@ -56,7 +56,14 @@ const REFRESH_COOKIE = "kintsugi_refresh";
  * rotates the refresh token, so a page load was needlessly churning the token
  * family that theft detection watches.
  */
-const NOT_A_TOKEN_PROBLEM = new Set(["ADMIN_SESSION_REQUIRED", "ADMIN_AUTH_FAILED"]);
+const NOT_A_TOKEN_PROBLEM = new Set([
+  "ADMIN_SESSION_REQUIRED",
+  "ADMIN_AUTH_FAILED",
+  // Changing a password answers 401 when the CURRENT password is wrong. Same
+  // story: refreshing cannot change the answer, and retrying would spend two of
+  // the ten attempts allowed per fifteen minutes on one typo.
+  "WRONG_PASSWORD",
+]);
 
 /**
  * Whether a 401 is worth refreshing for.

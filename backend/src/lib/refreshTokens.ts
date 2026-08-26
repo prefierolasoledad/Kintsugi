@@ -67,6 +67,31 @@ export async function rotateRefreshToken(rawToken: string): Promise<RotateResult
   return { ok: true, userId: record.userId, token: newToken };
 }
 
+/**
+ * Revokes every live refresh token for a user.
+ *
+ * Called whenever the password changes, by either route. A password change is
+ * the standard response to "somebody else may be in my account", and it is
+ * worthless if the intruder's session keeps working — they would simply keep
+ * refreshing, and the owner would have locked out nobody.
+ *
+ * `except` keeps the caller's own session alive, so changing your password from
+ * the settings page does not sign you out of the tab you are using. A reset
+ * passes nothing, because there is no session to preserve and the whole point
+ * is that every existing one dies.
+ */
+export async function revokeAllRefreshTokens(userId: string, except?: string) {
+  const { count } = await prisma.refreshToken.updateMany({
+    where: {
+      userId,
+      revokedAt: null,
+      ...(except ? { tokenHash: { not: hashToken(except) } } : {}),
+    },
+    data: { revokedAt: new Date() },
+  });
+  return count;
+}
+
 export async function revokeRefreshToken(rawToken: string) {
   const tokenHash = hashToken(rawToken);
   await prisma.refreshToken.updateMany({

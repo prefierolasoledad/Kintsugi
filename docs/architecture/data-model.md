@@ -316,6 +316,13 @@ Enforced in the application layer unless noted:
 20. A `Refund` row is append-only apart from `status` moving off `PENDING`, and
     `providerRefundId` is unique — which is what makes webhook redelivery
     idempotent.
+21. A `PasswordResetToken` is single-use and lives one hour. Only its hash is
+    stored, and it is burned in the same transaction as the password change so
+    a crash cannot leave a spent link usable.
+22. At most one unused `PasswordResetToken` per user — asking again marks the
+    previous one used, so two live links can never exist at once.
+23. Changing or resetting a password revokes every refresh token for that user.
+    A change keeps the caller's own; a reset keeps none.
 
 ## Migrations
 
@@ -332,6 +339,7 @@ Enforced in the application layer unless noted:
 | … | *(orders, wishlist, addresses, notifications, moderation, admin TOTP)* |
 | `add_totp_replay_protection` | `users.totpLastUsedAt` |
 | `add_refunds` | `refunds`, `RefundStatus`, `RefundTrigger`, `orders.refundedCents`, `NotificationType.REFUND_ISSUED` |
+| `add_password_reset_tokens` | `password_reset_tokens` |
 
 ```bash
 npx prisma migrate dev --name <name>   # create + apply

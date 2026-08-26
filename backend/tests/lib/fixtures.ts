@@ -171,6 +171,18 @@ export class Scope {
   }
 
   /** The email this scope gave a named account, for direct DB assertions. */
+  /**
+   * Registers an account this scope created by some other route.
+   *
+   * Needed when a suite signs somebody up through the real endpoint rather than
+   * a fixture — testing the signup path itself, for instance. Without it the
+   * account is invisible to cleanup and survives the run, and verifyClean would
+   * not notice because it only looks at what the scope knows about.
+   */
+  track(email: string) {
+    this.emails.add(email);
+  }
+
   emailFor(name: string) {
     return `${PREFIX}${this.tag}.${name}${DOMAIN}`;
   }
@@ -299,6 +311,27 @@ export class Scope {
  * and returns whatever arrived, so the caller's assertion produces a readable
  * failure rather than a hang.
  */
+/** Same, for a user known by id rather than by address. */
+export async function awaitNotificationsForUser(
+  userId: string,
+  types: string[],
+  timeoutMs = 5000
+): Promise<Array<{ type: string; title: string; body: string | null }>> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const rows = await prisma.notification.findMany({
+      where: { userId },
+      select: { type: true, title: true, body: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const present = new Set(rows.map((r) => r.type));
+    if (types.every((t) => present.has(t as never))) return rows;
+    if (Date.now() >= deadline) return rows;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
 export async function awaitNotifications(
   email: string,
   types: string[],

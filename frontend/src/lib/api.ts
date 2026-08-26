@@ -81,6 +81,42 @@ export function resendVerification(email: string) {
   });
 }
 
+/* ---- passwords ---- */
+
+/**
+ * Change your password while signed in.
+ *
+ * `otherSessionsEnded` is surfaced rather than swallowed: somebody changing
+ * their password because they suspect a break-in wants to be told the other
+ * sessions actually died.
+ */
+export function changePassword(input: { currentPassword: string; newPassword: string }) {
+  return request<{ ok: true; otherSessionsEnded: number; message: string }>(
+    "/auth/password/change",
+    { method: "POST", body: JSON.stringify(input) }
+  );
+}
+
+/**
+ * Ask for a reset link.
+ *
+ * Always succeeds, whether or not the address has an account — the API answers
+ * identically on purpose, so the UI must not imply otherwise either.
+ */
+export function forgotPassword(email: string) {
+  return request<{ message: string }>("/auth/password/forgot", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function resetPassword(input: { token: string; newPassword: string }) {
+  return request<{ ok: true; message: string }>("/auth/password/reset", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function becomeSeller() {
   return request<{ user: User }>("/auth/become-seller", { method: "POST" });
 }

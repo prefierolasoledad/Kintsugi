@@ -207,6 +207,44 @@ function wrap(heading: string, body: string, cta?: { label: string; url: string 
 </html>`;
 }
 
+/**
+ * The "you asked to reset your password" email.
+ *
+ * Deliberately says what to do if it was NOT them: nothing. No "click here if
+ * this wasn't you" link — that link would itself be a thing an attacker could
+ * get somebody to click, and doing nothing is genuinely the correct action
+ * because the password only changes when the link below is used.
+ */
+export async function sendPasswordResetEmail(email: string, resetUrl: string) {
+  await deliver(
+    {
+      to: email,
+      subject: "Reset your password",
+      text: [
+        "Somebody asked to reset the password for this Kintsugi account.",
+        "",
+        "If it was you, open this link:",
+        resetUrl,
+        "",
+        "The link works once and expires in one hour.",
+        "",
+        "If it was not you, do nothing. Your password has not changed and this",
+        "link will expire on its own.",
+      ].join("\n"),
+      html: wrap(
+        "Reset your password",
+        `<p style="margin:0">Somebody asked to reset the password for this account.</p>
+         <p style="margin:12px 0 0">The link works once and expires in <strong>one hour</strong>.</p>
+         <p style="margin:12px 0 0">If it wasn't you, do nothing — your password
+         hasn't changed and the link will expire on its own.</p>`,
+        { label: "Choose a new password", url: resetUrl }
+      ),
+    },
+    "Password reset link",
+    resetUrl
+  );
+}
+
 export async function sendVerificationEmail(email: string, verifyUrl: string) {
   await deliver(
     {

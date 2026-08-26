@@ -144,6 +144,29 @@ at once to prove the claim serialises them, and a proxy hop in front of each one
 spreads them out in time — which makes the race less likely to happen at all. A
 test that can only pass is not measuring anything.
 
+## Shared state outlives what a suite creates
+
+Four suites have now failed **only inside a full run**, passing when run alone.
+Every one had the same shape, and it is worth recognising early because a full
+run is all CI ever does.
+
+**Writes that land after the call returns.** `notify()` is fire-and-forget so a
+notification failure can never fail the sale that raised it — which means the
+row commits shortly *after* the function returns. Reading the inbox on the next
+line is a race that usually passes. Use `awaitNotifications()` or
+`awaitNotificationsForUser()` from `lib/fixtures.ts`.
+
+**In-memory counters keyed on something stable.** Rate limits live in the server
+process, so they survive between runs, and some are keyed by email rather than
+user id — deliberately, since deleting an account must not reset your allowance.
+Deterministic Scope addresses therefore exhaust their budget across runs. Where
+a suite needs several hits on a rate-limited endpoint, give it a per-run
+address: `scope.buyer(\`forgot-${Date.now()}\`)`.
+
+Both failure modes report as something else entirely — a wording bug, a missing
+row, a token that was not stored — so the cause is rarely where the failure
+points.
+
 ## Authenticator codes are single-use
 
 Any suite that signs in to the admin panel has to cope with this: finishing
@@ -154,7 +177,7 @@ code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-619 assertions across 18 suites.
+722 assertions across 20 suites.
 
 | Suite | Covers |
 |---|---|

@@ -1,7 +1,7 @@
 import { prisma, requireCatalog, requireServices } from "../lib/db";
 import { currentCode, nextPeriod } from "../lib/totp";
 import { web } from "../lib/api";
-import { PASSWORD, Scope } from "../lib/fixtures";
+import { awaitNotificationsForUser, PASSWORD, Scope } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
 
 /**
@@ -282,6 +282,11 @@ void main(
     const sellerUserId = await prisma.listing
       .findUniqueOrThrow({ where: { id: listing.id }, select: { seller: { select: { userId: true } } } })
       .then((l) => l.seller.userId);
+    // Waited for, not read once: notify() is fire-and-forget so a notification
+    // failure can never fail the moderation action, which means the row lands
+    // just after the call returns. This read immediately and failed only inside
+    // a full run, where the machine is busier.
+    await awaitNotificationsForUser(sellerUserId, ["LISTING_REMOVED"]);
     const sellerNotifs = await prisma.notification.findMany({
       where: { userId: sellerUserId, type: "LISTING_REMOVED", createdAt: { gte: since } },
       select: { body: true },
