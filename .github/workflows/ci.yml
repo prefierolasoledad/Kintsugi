@@ -201,6 +201,21 @@ jobs:
         working-directory: backend
         run: npx prisma db seed
 
+      # The BROWSE suite is about scale, and the base seed does not have any.
+      #
+      # tests/browser/catalog.ts asserts things that are only true of a large
+      # catalogue: at least 100 distinct photos, no single photo over-used, page
+      # two being full, a deep page still rendering. With the base seed's ~27
+      # listings those are not weaker assertions, they are meaningless ones —
+      # page two holds three items and the suite failed demanding six.
+      #
+      # Weakening them to pass on 27 listings would delete the point of the
+      # suite, so CI loads the same catalogue development uses. No network is
+      # involved: the photo URLs are strings, and the work is 900 inserts.
+      - name: Seed at scale
+        working-directory: backend
+        run: npm run seed:scale
+
       # A PRODUCTION build, not `next dev`.
       #
       # The runner deliberately uses the same thing tests/README.md recommends

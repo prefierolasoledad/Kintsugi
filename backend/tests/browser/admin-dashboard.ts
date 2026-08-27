@@ -1,6 +1,6 @@
 import { WEB, prisma, requireCatalog, requireServices } from "../lib/db";
 import { currentCode, freshCode } from "../lib/totp";
-import { PASSWORD, Scope } from "../lib/fixtures";
+import { buyOne, PASSWORD, Scope } from "../lib/fixtures";
 import { brokenImages, login, openBrowser, realFailures } from "../lib/browser";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
 
@@ -29,6 +29,29 @@ void main(
 
     const adminEmail = await scope.register("admin", { withAddress: true });
     await prisma.user.update({ where: { email: adminEmail }, data: { role: "ADMIN" } });
+
+    /**
+     * At least one paid order has to exist before the dashboard means anything.
+     *
+     * This suite used to rely on whatever orders happened to be lying in the
+     * database. On a developer's machine there are always some; on a fresh CI
+     * database there are none, because the seed creates listings and reviews but
+     * never buys anything. Every suite that does buy something also cleans up
+     * after itself.
+     *
+     * With zero orders the Pagination component renders NOTHING — it returns
+     * null rather than "0–0 of 0" — so the wait for the row counter timed out
+     * after twenty seconds and took the suite down with it. The tell was one
+     * line earlier: "gross sales reads $0, which is what the database holds".
+     *
+     * Buying here makes the run deterministic and the assertions worth making:
+     * the dashboard is checked against a figure that is not zero.
+     */
+    const buyer = await scope.buyer("buyer");
+    const listing = await scope.claimListing();
+    const { paid } = await buyOne(buyer, listing.id);
+    t.check(paid.json.outcome === "succeeded",
+      "a paid order exists for the dashboard to report on", paid.json?.outcome);
 
     const h = await openBrowser("dashboard");
     try {
