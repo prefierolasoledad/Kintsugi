@@ -62,6 +62,18 @@ jobs:
         working-directory: backend
         run: npx tsc --noEmit
 
+      # Next generates global types — LayoutProps, PageProps, the route map —
+      # into .next/types, and tsconfig includes that directory. On a developer's
+      # machine it is always there from a previous dev or build run, so a bare
+      # `tsc --noEmit` appears to work. On a fresh checkout it does not exist and
+      # the typecheck fails with "Cannot find name 'LayoutProps'", which is what
+      # happened on the first CI run.
+      #
+      # typegen produces exactly those types without paying for a full build.
+      - name: Generate Next route types
+        working-directory: frontend
+        run: npx next typegen
+
       - name: Typecheck frontend
         working-directory: frontend
         run: npx tsc --noEmit
@@ -151,6 +163,16 @@ jobs:
       - name: Install frontend
         working-directory: frontend
         run: npm ci
+
+      # The generated client is not committed — .gitignore excludes
+      # src/generated — so a fresh checkout has nothing to import. Every step
+      # below needs it: the seed script, the TypeScript build, and the server.
+      #
+      # This was missing, and `prisma db seed` failed with "Cannot find module
+      # '../src/generated/prisma/client'" on the very first CI run.
+      - name: Generate Prisma client
+        working-directory: backend
+        run: npx prisma generate
 
       - name: Migrate
         working-directory: backend
