@@ -1,6 +1,7 @@
 import { prisma, requireCatalog, requireServices } from "../lib/db";
-import { awaitNotifications, buyOne, checkoutOne, CARDS, Scope } from "../lib/fixtures";
+import { awaitNotifications, buyOne, checkoutOne, CARDS, PASSWORD, Scope } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
+import { currentCode, freshCode } from "../lib/totp";
 import {
   hasWebhookSecret,
   refundObject,
@@ -49,23 +50,36 @@ void main(
      * ============================================================ */
     t.section("1 - can't send it, so the money goes back");
 
-    const first = await scope.claimListing();
-    const { order, paid } = await buyOne(buyer, first.id);
+    /**
+     * A listing this suite OWNS, so the seller can be driven through the API.
+     *
+     * The earlier version borrowed a seeded listing and called markUnfulfillable
+     * by importing it — which runs the refund in the TEST process while the
+     * payment was taken by the SERVER. Against a containerised API that fails
+     * outright: the stub provider holds intents in an in-process Map, so the
+     * refund looks for the payment in an empty one.
+     */
+    const { seller, listing: owned } = await scope.ownListing("seller", {
+      priceCents: 10853,
+    });
+    const { order, paid } = await buyOne(buyer, owned.id);
     t.check(paid.json.outcome === "succeeded", "the item was bought and paid for",
       paid.json?.outcome);
 
     const line = await lineOf(order.id);
     const paidForLine = line.unitPriceCents * line.quantity;
 
-    // That listing belongs to a seed seller, so the seller side is driven
-    // directly rather than by logging in as somebody we do not control.
-    const { markUnfulfillable } = await import("../../src/lib/sales");
-    const result = await markUnfulfillable({
-      sellerId: line.sellerId!,
-      orderItemId: line.id,
+    const sales = await seller.get("/api/seller/sales");
+    const sale = sales.json.sales.find((x: { id: string }) => x.id === line.id);
+    t.check(!!sale, "the seller sees the sale", `${sales.status} ${sales.json?.sales?.length}`);
+
+    const cannotSend = await seller.post(`/api/seller/sales/${line.id}/cannot-send`, {
       reason: "Cracked while I was packing it.",
     });
+    t.check(cannotSend.status === 200, "the seller can mark it unsendable",
+      `${cannotSend.status} ${cannotSend.text.slice(0, 120)}`);
 
+    const result = cannotSend.json;
     t.check(result.refunded === true, "the refund is issued in the same operation",
       JSON.stringify(result));
     t.check(result.refundCents === paidForLine,
@@ -131,18 +145,12 @@ void main(
      * ============================================================ */
     t.section("2 - the same line cannot be refunded twice");
 
-    let againCode: string | null = null;
-    try {
-      await markUnfulfillable({
-        sellerId: line.sellerId!,
-        orderItemId: line.id,
-        reason: "Saying it again.",
-      });
-    } catch (err) {
-      againCode = (err as { code?: string }).code ?? "WRONG_ERROR_TYPE";
-    }
-    t.check(againCode === "ALREADY_UNFULFILLABLE",
-      "a second attempt is refused, and says why rather than 'not found'", againCode);
+    const again = await seller.post(`/api/seller/sales/${line.id}/cannot-send`, {
+      reason: "Saying it again.",
+    });
+    t.check(again.status === 409 && again.json.code === "ALREADY_UNFULFILLABLE",
+      "a second attempt is refused, and says why rather than 'not found'",
+      `${again.status} ${again.json?.code}`);
 
     const rowCount = await prisma.refund.count({ where: { orderItemId: line.id } });
     t.check(rowCount === 1, "and leaves exactly one refund row", rowCount);
@@ -160,19 +168,42 @@ void main(
      * filter on PAID alone — which made the sale vanish from their list, their
      * summary, and their totals as though it never happened.
      */
-    const { listSales, salesSummary } = await import("../../src/lib/sales");
-    const sellerSales = await listSales(line.sellerId!);
-    t.check(sellerSales.some((sale) => sale.id === line.id),
+    const after = await seller.get("/api/seller/sales");
+    t.check(after.json.sales.some((x: { id: string }) => x.id === line.id),
       "a refunded sale is still visible to the seller, not vanished",
-      `${sellerSales.length} sale(s) listed`);
-
-    const summary = await salesSummary(line.sellerId!);
-    t.check(summary.refunded >= 1, "counted as refunded in their summary", summary.refunded);
+      `${after.json?.sales?.length} sale(s) listed`);
+    t.check(after.json.summary.refunded >= 1,
+      "counted as refunded in their summary", after.json?.summary?.refunded);
 
     /* ============================================================ *
      * 3. Never more than came in.
+     *
+     * From here the refunds are issued by a MODERATOR through the admin API,
+     * which is both the real path for a dispute and the only way to reach the
+     * server's own payment provider. Calling issueRefund() in-process refunds
+     * against this process's stub map rather than the server's.
+     *
+     * It also gives /api/admin/orders/:id/refund its first coverage.
      * ============================================================ */
     t.section("3 - a refund cannot exceed what was paid");
+
+    const admin = await scope.buyer("moderator");
+    await prisma.user.update({
+      where: { email: scope.emailFor("moderator") },
+      data: { role: "ADMIN" },
+    });
+    const enrol = await admin.post("/api/admin/totp/setup", { password: PASSWORD });
+    await admin.post("/api/admin/totp/confirm", { code: currentCode(enrol.json.secret) });
+    // A fresh period: confirming spent the code above, and codes are single-use.
+    const opened = await admin.post("/api/admin/session", {
+      password: PASSWORD,
+      code: await freshCode(enrol.json.secret),
+    });
+    t.check(opened.status === 200, "a moderator opens an admin session", opened.status);
+
+    /** Issues a refund the way a moderator actually would. */
+    const adminRefund = (orderId: string, amountCents: number, reason: string) =>
+      admin.post(`/api/admin/orders/${orderId}/refund`, { amountCents, reason });
 
     const second = await scope.claimListing();
     const { order: o2 } = await buyOne(buyer, second.id);
@@ -181,24 +212,21 @@ void main(
       select: { subtotalCents: true },
     });
 
-    const { issueRefund, RefundError, refundableCents } = await import("../../src/lib/refunds");
+    // Read-only, so safe to call in-process: it queries the database and never
+    // touches the payment provider.
+    const { refundableCents } = await import("../../src/lib/refunds");
 
     t.check(await refundableCents(o2.id) === o2Row.subtotalCents,
       "the whole subtotal is refundable to begin with");
 
-    let tooMuch: string | null = null;
-    try {
-      await issueRefund({
-        orderId: o2.id,
-        amountCents: o2Row.subtotalCents + 1,
-        reason: "One cent more than was ever paid.",
-        trigger: "ADMIN",
-      });
-    } catch (err) {
-      tooMuch = err instanceof RefundError ? err.code : "WRONG_ERROR_TYPE";
-    }
-    t.check(tooMuch === "EXCEEDS_ORDER_TOTAL",
-      "refunding a penny more than the order is refused", tooMuch);
+    const tooMuch = await adminRefund(
+      o2.id,
+      o2Row.subtotalCents + 1,
+      "One cent more than was ever paid."
+    );
+    t.check(tooMuch.json.code === "EXCEEDS_ORDER_TOTAL",
+      "refunding a penny more than the order is refused",
+      `${tooMuch.status} ${tooMuch.json?.code}`);
 
     const notTouched = await prisma.order.findUniqueOrThrow({
       where: { id: o2.id },
@@ -209,13 +237,9 @@ void main(
 
     /* ---- a partial refund leaves the order PAID ---- */
     const half = Math.floor(o2Row.subtotalCents / 2);
-    const partial = await issueRefund({
-      orderId: o2.id,
-      amountCents: half,
-      reason: "Arrived scuffed, partial refund agreed.",
-      trigger: "ADMIN",
-    });
-    t.check(partial.status === "SUCCEEDED", "a partial refund succeeds", partial.status);
+    const partial = await adminRefund(o2.id, half, "Arrived scuffed, partial refund agreed.");
+    t.check(partial.status === 200 && partial.json.refund.status === "SUCCEEDED",
+      "a partial refund succeeds", `${partial.status} ${JSON.stringify(partial.json)}`);
 
     const partlyRefunded = await prisma.order.findUniqueOrThrow({
       where: { id: o2.id },
@@ -237,18 +261,15 @@ void main(
      * ============================================================ */
     t.section("4 - five simultaneous refunds cannot overdraw the order");
 
-    const attempts = await Promise.allSettled(
-      Array.from({ length: 5 }, () =>
-        issueRefund({
-          orderId: o2.id,
-          amountCents: half,
-          reason: "Concurrent attempt.",
-          trigger: "ADMIN",
-        })
-      )
+    // Five real, simultaneous HTTP requests — a stronger test than five
+    // in-process calls, because the server has to serialise genuinely
+    // concurrent connections rather than interleaved promises.
+    const attempts = await Promise.all(
+      Array.from({ length: 5 }, () => adminRefund(o2.id, half, "Concurrent attempt."))
     );
-    const succeeded = attempts.filter((a) => a.status === "fulfilled").length;
-    t.check(succeeded <= 1, "at most one of five got through", `${succeeded} succeeded`);
+    const succeeded = attempts.filter((r) => r.status === 200).length;
+    t.check(succeeded <= 1, "at most one of five got through",
+      `${succeeded} succeeded; statuses ${JSON.stringify(attempts.map((r) => r.status))}`);
 
     const final = await prisma.order.findUniqueOrThrow({
       where: { id: o2.id },
@@ -275,33 +296,20 @@ void main(
     const third = await scope.claimListing();
     const unpaid = await checkoutOne(buyer, third.id);
 
-    let unpaidCode: string | null = null;
-    try {
-      await issueRefund({
-        orderId: unpaid.id,
-        amountCents: 100,
-        reason: "Should not be possible.",
-        trigger: "ADMIN",
-      });
-    } catch (err) {
-      unpaidCode = err instanceof RefundError ? err.code : "WRONG_ERROR_TYPE";
-    }
-    t.check(unpaidCode === "NOT_REFUNDABLE",
-      "refunding an unpaid order is refused", unpaidCode);
+    const onUnpaid = await adminRefund(unpaid.id, 100, "Should not be possible.");
+    t.check(onUnpaid.json.code === "NOT_REFUNDABLE",
+      "refunding an unpaid order is refused",
+      `${onUnpaid.status} ${onUnpaid.json?.code}`);
     t.check(await refundableCents(unpaid.id) === 0,
       "and it reports nothing refundable");
 
     await buyer.post(`/api/orders/${unpaid.id}/cancel`);
 
     /* ---- a reason is not optional ---- */
-    let noReason: string | null = null;
-    try {
-      await issueRefund({ orderId: o2.id, amountCents: 1, reason: "  ", trigger: "ADMIN" });
-    } catch (err) {
-      noReason = err instanceof RefundError ? err.code : "WRONG_ERROR_TYPE";
-    }
-    t.check(noReason === "REASON_REQUIRED",
-      "a refund with no stated reason is refused — the buyer is shown it", noReason);
+    const noReason = await adminRefund(o2.id, 1, "  ");
+    t.check(noReason.status === 400,
+      "a refund with no stated reason is refused — the buyer is shown it",
+      `${noReason.status} ${noReason.json?.code}`);
 
     /* ============================================================ *
      * 6. What the buyer can see.

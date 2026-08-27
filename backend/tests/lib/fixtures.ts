@@ -170,6 +170,71 @@ export class Scope {
     return client;
   }
 
+  /**
+   * A seller this scope controls, plus a listing they own.
+   *
+   * WHY THIS EXISTS
+   * claimListing() borrows a listing from the seeded catalogue, which belongs to
+   * a seed seller nobody can log in as. Suites needing the SELLER side of a sale
+   * therefore reached for the library directly — `import { markUnfulfillable }`
+   * — and that quietly runs the code in the TEST process rather than the
+   * server's.
+   *
+   * Which works, until the two processes disagree. Against a containerised API
+   * it broke completely: the stub payment provider keeps intents in an
+   * in-process Map, so a payment taken over HTTP lives in the server's memory
+   * and a refund issued in-process looks for it in an empty one. Every refund
+   * came back "could not confirm with the provider".
+   *
+   * Owning the listing means the seller can be logged in and driven through the
+   * API like any other user, which is what the test should have been doing.
+   */
+  async ownListing(
+    name = "owner",
+    opts: { priceCents?: number; quantity?: number; title?: string } = {}
+  ) {
+    const seller = await this.seller(name);
+
+    const profile = await prisma.sellerProfile.findFirstOrThrow({
+      where: { user: { email: this.emailFor(name) } },
+      select: { id: true },
+    });
+    const category = await prisma.category.findFirstOrThrow({ select: { id: true } });
+
+    const listing = await prisma.listing.create({
+      data: {
+        // Timestamped: a suite may want several, and re-running must not
+        // collide on the unique slug.
+        slug: `${PREFIX}${this.tag}-${name}-${Date.now()}`,
+        title: opts.title ?? "Test listing",
+        description: "Created by a test so the seller side can be driven properly.",
+        sellerId: profile.id,
+        categoryId: category.id,
+        condition: "GOOD",
+        priceCents: opts.priceCents ?? 4200,
+        quantity: opts.quantity ?? 1,
+        status: "ACTIVE",
+        images: {
+          create: {
+            url: "https://images.unsplash.com/photo-1465385076216-9288f6f0584b",
+            position: 0,
+          },
+        },
+      },
+      select: { id: true, slug: true, title: true, priceCents: true, quantity: true },
+    });
+
+    // Tracked so cleanup restores it. Deleting the seller cascades the listing,
+    // but tracking keeps verifyClean honest either way.
+    this.listings.set(listing.id, {
+      title: listing.title,
+      status: "ACTIVE",
+      quantity: listing.quantity,
+    });
+
+    return { seller, listing };
+  }
+
   /** The email this scope gave a named account, for direct DB assertions. */
   /**
    * Registers an account this scope created by some other route.
@@ -243,8 +308,12 @@ export class Scope {
       await prisma.user.deleteMany({ where: { email: { in: emails } } });
     }
 
+    // updateMany, not update: a listing this scope CREATED (ownListing) is
+    // cascaded away when its seller is deleted a few lines above, and update()
+    // throws on a row that is gone. A borrowed catalogue listing still exists
+    // and is restored exactly as before.
     for (const [id, snapshot] of this.listings) {
-      await prisma.listing.update({
+      await prisma.listing.updateMany({
         where: { id },
         data: { status: snapshot.status as never, quantity: snapshot.quantity },
       });

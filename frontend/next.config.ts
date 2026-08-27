@@ -2,6 +2,15 @@ import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /**
+   * Traces the files the server actually needs into .next/standalone.
+   *
+   * For the container image this is the difference between shipping the whole
+   * node_modules tree and shipping the few hundred files that get imported.
+   * `next start` still works locally and in CI, which read .next as before.
+   */
+  output: "standalone",
+
   turbopack: {
     root: path.join(__dirname),
   },

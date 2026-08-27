@@ -96,11 +96,51 @@ export function verifyStripeWebhook(
     throw new StripeConfigError("Missing Stripe signature header.");
   }
 
+  /**
+   * Verification does NOT need API credentials.
+   *
+   * It is an HMAC of the raw body against STRIPE_WEBHOOK_SECRET — no network
+   * call, no account. This used to go through getStripe(), which throws when
+   * STRIPE_SECRET_KEY is unset, and the catch below then reported a missing key
+   * as "Invalid webhook signature": a configuration mistake disguised as a
+   * forgery, with nothing in the log to say otherwise.
+   *
+   * That also made the endpoint untestable with the stub providers, which is
+   * how it was found — the suites sign their own payloads and had no reason to
+   * need a Stripe account.
+   *
+   * A throwaway client is used when no key is configured. It is never used to
+   * reach Stripe; constructEvent only reads the crypto.
+   */
+  const verifier = hasSecretKey() ? getStripe() : signatureOnlyClient();
+
   try {
-    return getStripe().webhooks.constructEvent(rawBody, signature, secret);
+    return verifier.webhooks.constructEvent(rawBody, signature, secret);
   } catch {
     // Deliberately opaque: a caller probing this endpoint learns nothing about
     // why their forgery failed.
     throw new StripeConfigError("Invalid webhook signature.");
   }
+}
+
+function hasSecretKey(): boolean {
+  return Boolean(env("STRIPE_SECRET_KEY"));
+}
+
+let verifierClient: Stripe | null = null;
+
+/**
+ * A Stripe instance built solely to verify signatures.
+ *
+ * The key is a placeholder and is never sent anywhere — constructEvent does not
+ * make requests. Kept separate from the real client so there is no chance of
+ * this one being used to talk to Stripe with a nonsense credential.
+ */
+function signatureOnlyClient(): Stripe {
+  if (!verifierClient) {
+    verifierClient = new Stripe("sk_test_signature_verification_only", {
+      apiVersion: "2026-07-29.dahlia",
+    });
+  }
+  return verifierClient;
 }

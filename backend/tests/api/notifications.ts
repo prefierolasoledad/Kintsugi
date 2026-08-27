@@ -116,6 +116,12 @@ void main(
       trackingNumber: "RM555GB",
     });
 
+    // Waited for. The route responds before notify() has committed — that is
+    // the point of fire-and-forget — so reading the inbox on the next line is a
+    // race. It passed on the host and failed against a containerised API, where
+    // the HTTP round trip changes the timing.
+    await awaitNotifications(scope.emailFor("buyer"), ["ORDER_SHIPPED"]);
+
     const shipped = await buyer.get("/api/notifications");
     t.check(shipped.json.unread === 1, "buyer has one unread", shipped.json.unread);
     const ship = shipped.json.notifications[0];
@@ -126,6 +132,7 @@ void main(
     /* ---------------------------------------------------------- */
     t.section("delivery tells the seller");
     await buyer.post(`/api/orders/items/${saleRow.id}/delivered`);
+    await awaitNotifications(scope.emailFor("seller"), ["ORDER_DELIVERED"]);
     const delivered = await seller.get("/api/notifications");
     t.check(delivered.json.unread === 2, "seller now has two unread", delivered.json.unread);
     t.check(delivered.json.notifications[0]?.type === "ORDER_DELIVERED",
@@ -140,6 +147,7 @@ void main(
     });
     t.check(review.status === 201, "review posted", review.status);
 
+    await awaitNotifications(scope.emailFor("seller"), ["REVIEW_RECEIVED"]);
     const afterReview = await seller.get("/api/notifications");
     t.check(afterReview.json.unread === 3, "seller told about the review",
       afterReview.json.unread);
@@ -208,16 +216,16 @@ void main(
 
     /* ---------------------------------------------------------- */
     t.section("cannot-send tells the buyer, and states the refund position");
-    const second = await scope.claimListing();
-    const { order: o2 } = await buyOne(buyer, second.id);
+    // Owned rather than borrowed, so the seller can be driven through the API —
+    // see the note in api/refunds.ts. Calling the library in-process refunds
+    // against the wrong payment provider state once the API is a container.
+    const { seller: owner, listing: mine } = await scope.ownListing("owner");
+    const { order: o2 } = await buyOne(buyer, mine.id);
     const line2 = await prisma.orderItem.findFirstOrThrow({
       where: { orderId: o2.id },
       select: { id: true, sellerId: true },
     });
-    const { markUnfulfillable } = await import("../../src/lib/sales");
-    await markUnfulfillable({
-      sellerId: line2.sellerId!,
-      orderItemId: line2.id,
+    await owner.post(`/api/seller/sales/${line2.id}/cannot-send`, {
       reason: "It broke while I was packing it.",
     });
 

@@ -243,28 +243,38 @@ void main(
     /* ============================================================ */
     t.section("cannot send — and says the refund is owed");
 
-    const second2 = await scope.claimListing();
-    const { order: o2, paid: p2 } = await buyOne(buyer, second2.id);
+    /**
+     * A listing this scope OWNS, so the seller side goes through the API.
+     *
+     * Borrowing a seeded listing meant importing markUnfulfillable and running
+     * it in the TEST process — which refunds against this process's stub payment
+     * map while the payment was taken by the server's. Fine when both are the
+     * same process; broken the moment the API runs in a container.
+     */
+    const { seller: owner, listing: mine } = await scope.ownListing("owner");
+    const { order: o2, paid: p2 } = await buyOne(buyer, mine.id);
     t.check(p2.json.outcome === "succeeded", "bought a second item");
 
     const sellerOfSecond = await prisma.orderItem.findFirstOrThrow({
       where: { orderId: o2.id },
       select: { id: true, sellerId: true },
     });
-    // That listing belongs to a seed seller, so drive this one directly.
-    const { markUnfulfillable } = await import("../../src/lib/sales");
-    const result = await markUnfulfillable({
-      sellerId: sellerOfSecond.sellerId!,
-      orderItemId: sellerOfSecond.id,
-      reason: "Broke while I was packing it, sorry.",
-    });
+
+    const cannotSend = await owner.post(
+      `/api/seller/sales/${sellerOfSecond.id}/cannot-send`,
+      { reason: "Broke while I was packing it, sorry." }
+    );
+    t.check(cannotSend.status === 200, "the seller marks it unsendable",
+      `${cannotSend.status} ${cannotSend.text.slice(0, 120)}`);
+
     // Refunds are now issued in the same operation. This used to assert a
     // `refundOwed` flag, which was all the code could honestly offer at the
     // time. The refund path itself is covered in depth by api/refunds.ts.
-    t.check(result.refunded === true,
+    t.check(cannotSend.json.refunded === true,
       "marking it unfulfillable refunds the buyer, rather than quietly keeping the money",
-      JSON.stringify(result));
-    t.check(result.refundCents > 0, "for a non-zero amount", result.refundCents);
+      JSON.stringify(cannotSend.json));
+    t.check(cannotSend.json.refundCents > 0, "for a non-zero amount",
+      cannotSend.json?.refundCents);
 
     const buyerSees = await buyer.get(`/api/orders/${o2.id}`);
     t.check(buyerSees.json.order.items[0].fulfilment === "UNFULFILLABLE",

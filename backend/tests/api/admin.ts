@@ -1,7 +1,7 @@
 import { prisma, requireCatalog, requireServices } from "../lib/db";
 import { currentCode, nextPeriod } from "../lib/totp";
 import { web } from "../lib/api";
-import { awaitNotificationsForUser, PASSWORD, Scope } from "../lib/fixtures";
+import { awaitNotifications, awaitNotificationsForUser, PASSWORD, Scope } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
 
 /**
@@ -382,6 +382,9 @@ void main(
       outcome: "again",
     })).status === 409, "and cannot be closed twice");
 
+    // Waited for, like every other notification read: notify() is
+    // fire-and-forget so the row lands after the route has already answered.
+    await awaitNotifications(scope.emailFor("ordinary"), ["REPORT_RESOLVED"]);
     const reporterNotified = await prisma.notification.count({
       where: { user: { email: scope.emailFor("ordinary") }, type: "REPORT_RESOLVED" },
     });

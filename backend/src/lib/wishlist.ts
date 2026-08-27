@@ -142,14 +142,45 @@ export async function save(userId: string, listingId: string) {
     throw new WishlistError("NOT_FOUND", "That listing doesn't exist.", 404);
   }
 
-  // upsert leans on the compound unique index, so two simultaneous saves
-  // produce one row rather than a duplicate or a crash. Deliberately NOT
-  // "check then insert" — that is a read-then-write race.
-  await prisma.wishlistItem.upsert({
-    where: { userId_listingId: { userId, listingId } },
-    create: { userId, listingId },
-    update: {},
-  });
+  /**
+   * upsert first, and treat a unique violation as success.
+   *
+   * The upsert alone was assumed to be enough — the comment here used to claim
+   * that two simultaneous saves "produce one row rather than a duplicate or a
+   * crash". They do produce one row, but the loser of the race CRASHES: Prisma's
+   * upsert does not always compile to INSERT ... ON CONFLICT, so both callers
+   * can find no row and both attempt the insert. Running the suite against the
+   * containers surfaced it as a 500 on concurrent saves; it had never triggered
+   * on the host, which is what a race does.
+   *
+   * Catching the violation is the correct answer rather than a workaround. The
+   * operation is idempotent by design — PUT, not POST — and "somebody else
+   * inserted the row I was about to insert" is the outcome this endpoint wanted.
+   */
+  try {
+    await prisma.wishlistItem.upsert({
+      where: { userId_listingId: { userId, listingId } },
+      create: { userId, listingId },
+      update: {},
+    });
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+  }
+}
+
+/**
+ * Whether an error is "that row already exists".
+ *
+ * Checks the Prisma code AND the driver-adapter error text. Prisma 7 with
+ * driver adapters surfaces this as a DriverAdapterError wrapping
+ * `UniqueConstraintViolation`, which does not always carry the P2002 code that
+ * the engine-based client used to set — so testing only for P2002 misses it.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { code?: string; message?: string };
+  if (e.code === "P2002") return true;
+  return /unique.?constraint/i.test(e.message ?? "");
 }
 
 /** Removes a listing. Not-saved is a success too. */

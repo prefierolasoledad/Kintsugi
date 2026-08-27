@@ -107,6 +107,21 @@ export async function main(
   const t = await runSuite(name, body, cleanup);
   const { disconnect } = await import("./db");
   await disconnect();
+
+  /**
+   * NOTE, for whoever hits this next.
+   *
+   * On Windows, suites that skip early (a stub provider makes their case
+   * unreachable) abort here with a libuv assertion —
+   * `!(handle->flags & UV_HANDLE_CLOSING)` in win/async.c — after every
+   * assertion has already passed. The runner then counts the non-zero exit as a
+   * failing suite, showing "FAIL … 2 passed" with nothing actually failed.
+   *
+   * Deferring this exit by a tick was tried and made no difference, so the abort
+   * is not this call racing a close. It looks like Prisma tearing down a pool
+   * that never finished opening, on a code path that reaches disconnect in
+   * milliseconds. Linux is unaffected, which is what CI runs.
+   */
   process.exit(t.failed === 0 ? 0 : 1);
 }
 
