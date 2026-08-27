@@ -142,6 +142,18 @@ jobs:
       BACKEND_URL: http://localhost:4000
       PAYMENT_PROVIDER: stub
       KYC_PROVIDER: stub
+      # A shared HMAC key, not a credential.
+      #
+      # /webhooks/stripe refuses to trust anything without this — rightly, since
+      # otherwise it is an unauthenticated "mark my order paid" endpoint. But the
+      # value is only used to sign and verify: the suites sign their own payloads
+      # with it and the server checks them, so a fixed string exercises the real
+      # verification path with no Stripe account involved.
+      #
+      # Without it those suites skipped their webhook sections and then failed on
+      # the assertions that expect the endpoint to work at all — 16 of the refund
+      # suite's assertions never ran.
+      STRIPE_WEBHOOK_SECRET: whsec_ci_shared_hmac_key_not_a_secret
       MAIL_TRANSPORT: console
       # PORT is deliberately NOT set here. A job-level PORT is inherited by
       # every step, so `next start` picked up 4000 and bound it before the API
