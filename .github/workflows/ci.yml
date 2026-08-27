@@ -143,7 +143,11 @@ jobs:
       PAYMENT_PROVIDER: stub
       KYC_PROVIDER: stub
       MAIL_TRANSPORT: console
-      PORT: 4000
+      # PORT is deliberately NOT set here. A job-level PORT is inherited by
+      # every step, so `next start` picked up 4000 and bound it before the API
+      # could — the API died with EADDRINUSE and the health check hit the
+      # frontend, which answered 404. Each server is given its port explicitly
+      # at the point it starts.
 
     steps:
       - uses: actions/checkout@v4
@@ -211,11 +215,23 @@ jobs:
 
       - name: Start the API
         working-directory: backend
-        run: npm start > "$RUNNER_TEMP/api.log" 2>&1 &
+        run: PORT=4000 npm start > "$RUNNER_TEMP/api.log" 2>&1 &
+
+      # `next start` does NOT work with output: standalone — Next says so and
+      # exits. The standalone build is what the container ships, so CI runs it
+      # the same way rather than a second path that is never deployed.
+      #
+      # Static assets and public/ are not traced into standalone; Next expects
+      # them placed alongside it. The Dockerfile does the same three copies.
+      - name: Assemble the standalone server
+        working-directory: frontend
+        run: |
+          cp -r .next/static .next/standalone/.next/static
+          cp -r public .next/standalone/public
 
       - name: Start the frontend
         working-directory: frontend
-        run: npm start > "$RUNNER_TEMP/web.log" 2>&1 &
+        run: PORT=3000 node .next/standalone/server.js > "$RUNNER_TEMP/web.log" 2>&1 &
 
       # run.ts has its own preflight, but it exits(2) with a message rather than
       # waiting. Waiting here turns "the server had not finished booting" into a
