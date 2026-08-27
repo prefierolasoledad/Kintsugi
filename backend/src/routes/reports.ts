@@ -33,7 +33,7 @@ reportsRouter.post("/", async (req, res) => {
     }
 
     // Bounded so one person cannot flood the queue faster than it can be read.
-    const limit = checkRateLimit(`report:${req.userId}`, 20, 60 * 60 * 1000);
+    const limit = await checkRateLimit(`report:${req.userId}`, 20, 60 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({
         error: "You've reported a lot recently. Give us a chance to catch up.",

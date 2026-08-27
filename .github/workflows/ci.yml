@@ -118,6 +118,19 @@ jobs:
     timeout-minutes: 30
 
     services:
+      # Shared rate-limit counters. Without it the limiter falls back to
+      # per-process counters and the suite skips the sections that matter — the
+      # TTL, the atomic increment, and the two failure policies.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
       postgres:
         image: postgres:16-alpine
         env:
@@ -155,6 +168,9 @@ jobs:
       # suite's assertions never ran.
       STRIPE_WEBHOOK_SECRET: whsec_ci_shared_hmac_key_not_a_secret
       MAIL_TRANSPORT: console
+      # Set for BOTH the server and the test process, so the limiter under test
+      # is the one the assertions are about.
+      REDIS_URL: redis://localhost:6379
       # PORT is deliberately NOT set here. A job-level PORT is inherited by
       # every step, so `next start` picked up 4000 and bound it before the API
       # could — the API died with EADDRINUSE and the health check hit the

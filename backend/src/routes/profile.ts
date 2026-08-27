@@ -54,7 +54,7 @@ async function deleteStoredAvatar(url: string | null) {
 
 profileRouter.post("/avatar", singleAvatar, async (req, res) => {
   try {
-    const limit = checkRateLimit(`avatar:${req.userId}`, 10, 60 * 60 * 1000);
+    const limit = await checkRateLimit(`avatar:${req.userId}`, 10, 60 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({
         error: "Too many changes for now. Try again shortly.",

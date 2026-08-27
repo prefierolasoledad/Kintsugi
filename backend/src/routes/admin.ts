@@ -115,7 +115,7 @@ adminRouter.post("/totp/setup", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Enter your password.", code: "INVALID_INPUT" });
     }
 
-    const limit = checkRateLimit(`admin-totp:${req.userId}`, 10, 60 * 60 * 1000);
+    const limit = await checkRateLimit(`admin-totp:${req.userId}`, 10, 60 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({ error: "Too many attempts.", code: "RATE_LIMITED" });
     }
@@ -166,7 +166,7 @@ adminRouter.post("/totp/confirm", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Enter the six-digit code.", code: "INVALID_INPUT" });
     }
 
-    const limit = checkRateLimit(`admin-totp-confirm:${req.userId}`, 10, 15 * 60 * 1000);
+    const limit = await checkRateLimit(`admin-totp-confirm:${req.userId}`, 10, 15 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({ error: "Too many attempts.", code: "RATE_LIMITED" });
     }
@@ -225,7 +225,17 @@ adminRouter.post("/session", requireAuth, async (req, res) => {
      * of them at any moment. Without a limit that is brute-forceable in hours;
      * with one it is not brute-forceable at all.
      */
-    const limit = checkRateLimit(`admin-stepup:${req.userId}`, 8, 15 * 60 * 1000);
+    /**
+     * The one limit that fails CLOSED.
+     *
+     * Everywhere else an unreachable store allows the request — a defence in
+     * depth should not take the site down. Here it refuses: unlimited guessing
+     * at the admin panel is a worse outcome than nobody opening it during an
+     * outage, and the panel has one user who can wait.
+     */
+    const limit = await checkRateLimit(`admin-stepup:${req.userId}`, 8, 15 * 60 * 1000, {
+      failClosed: true,
+    });
     if (!limit.allowed) {
       return res.status(429).json({
         error: "Too many attempts. Wait a few minutes.",

@@ -381,7 +381,7 @@ function singleImage(req: Request, res: Response, next: NextFunction) {
 
 sellerRouter.post("/listings/:id/images", singleImage, async (req, res) => {
   try {
-    const limit = checkRateLimit(`upload:${req.userId}`, 30, 60 * 60 * 1000);
+    const limit = await checkRateLimit(`upload:${req.userId}`, 30, 60 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({
         error: "Too many uploads for now. Try again shortly.",

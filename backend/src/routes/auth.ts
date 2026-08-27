@@ -269,7 +269,7 @@ authRouter.post("/password/change", requireAuth, async (req, res) => {
 
     // Rate limited on the CURRENT password check, which is a password oracle
     // for anyone holding a stolen session and guessing.
-    const limit = checkRateLimit(`password-change:${req.userId}`, 10, 15 * 60 * 1000);
+    const limit = await checkRateLimit(`password-change:${req.userId}`, 10, 15 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({
         error: "Too many attempts. Wait a few minutes.",
@@ -324,8 +324,8 @@ authRouter.post("/password/forgot", async (req, res) => {
      * marked as spam. Per IP, because otherwise one caller can do that to a
      * long list of addresses instead.
      */
-    const perEmail = checkRateLimit(`forgot:${parsed.data.email}`, 3, 60 * 60 * 1000);
-    const perCaller = checkRateLimit(`forgot-ip:${req.ip}`, 20, 60 * 60 * 1000);
+    const perEmail = await checkRateLimit(`forgot:${parsed.data.email}`, 3, 60 * 60 * 1000);
+    const perCaller = await checkRateLimit(`forgot-ip:${req.ip}`, 20, 60 * 60 * 1000);
 
     if (perEmail.allowed && perCaller.allowed) {
       await requestPasswordReset(parsed.data.email);
@@ -376,7 +376,7 @@ authRouter.post("/password/reset", async (req, res) => {
      * exhausted it. Raised to a figure that still caps abuse without punishing
      * shared addresses.
      */
-    const limit = checkRateLimit(`reset-ip:${req.ip}`, 100, 60 * 60 * 1000);
+    const limit = await checkRateLimit(`reset-ip:${req.ip}`, 100, 60 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({ error: "Too many attempts.", code: "RATE_LIMITED" });
     }

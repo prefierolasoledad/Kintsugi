@@ -119,7 +119,7 @@ sellerVerificationRouter.post("/verification", async (req, res) => {
 
     // Attempts are capped: the stub decides deterministically from the document
     // number, so an unbounded endpoint would let someone probe for outcomes.
-    const limit = checkRateLimit(`kyc:${req.userId}`, 5, 60 * 60 * 1000);
+    const limit = await checkRateLimit(`kyc:${req.userId}`, 5, 60 * 60 * 1000);
     if (!limit.allowed) {
       return res.status(429).json({
         error: "Too many verification attempts. Try again later.",
