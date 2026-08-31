@@ -1,4 +1,9 @@
-import { createClient, type RedisClientType } from "redis";
+import { disconnectRedis, getRedis, isRedisConfigured, redisUrl } from "./redis";
+
+// Re-exported because this module was the only Redis consumer when it was
+// written, and call sites (and the suite) still ask it whether the store is
+// shared. The connection itself now lives in ./redis, shared with the cache.
+export { isRedisConfigured };
 
 /**
  * Fixed-window rate limiting, shared across instances when Redis is configured.
@@ -83,22 +88,6 @@ function checkInMemory(key: string, limit: number, windowMs: number): RateLimitR
  * Redis
  * ------------------------------------------------------------------ */
 
-function redisUrl(): string | undefined {
-  const raw = process.env.REDIS_URL;
-  if (raw === undefined) return undefined;
-  // Trimmed, blank treated as absent — a leading space is truthy and would pass
-  // every "is it configured?" check before failing at connect time.
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-export function isRedisConfigured(): boolean {
-  return redisUrl() !== undefined;
-}
-
-let client: RedisClientType | null = null;
-let connecting: Promise<RedisClientType> | null = null;
-
 /**
  * INCREMENT AND EXPIRE IN ONE ROUND TRIP.
  *
@@ -118,49 +107,12 @@ const INCR_AND_EXPIRE = `
   return { n, redis.call('PTTL', KEYS[1]) }
 `;
 
-async function getClient(): Promise<RedisClientType> {
-  if (client?.isReady) return client;
-  if (connecting) return connecting;
-
-  const url = redisUrl();
-  if (!url) throw new Error("REDIS_URL is not set");
-
-  connecting = (async () => {
-    const c = createClient({
-      url,
-      socket: {
-        // Bounded: five attempts with a rising delay, then give up and let the
-        // failure policy decide. An unbounded reconnect loop turns a dead Redis
-        // into a request that hangs rather than one that fails.
-        reconnectStrategy: (attempts) => (attempts > 5 ? false : Math.min(attempts * 200, 2000)),
-        connectTimeout: 3000,
-      },
-    }) as RedisClientType;
-
-    // Without a listener, a connection error is an unhandled 'error' event and
-    // takes the process down — which would make a Redis blip fatal to the API.
-    c.on("error", (err) => {
-      console.error("[rate-limit] redis error:", (err as Error).message);
-    });
-
-    await c.connect();
-    client = c;
-    return c;
-  })();
-
-  try {
-    return await connecting;
-  } finally {
-    connecting = null;
-  }
-}
-
 /** Checked at startup so the banner can say which store is in use. */
 export async function assertRateLimitStore(): Promise<string> {
   if (!isRedisConfigured()) {
     return "in-memory (per-process; limits multiply by the number of instances)";
   }
-  const c = await getClient();
+  const c = await getRedis();
   await c.ping();
   return `redis (${redisUrl()}) — shared across instances`;
 }
@@ -187,7 +139,7 @@ export async function checkRateLimit(
   }
 
   try {
-    const c = await getClient();
+    const c = await getRedis();
     const reply = (await c.eval(INCR_AND_EXPIRE, {
       keys: [`ratelimit:${key}`],
       arguments: [String(windowMs)],
@@ -232,8 +184,13 @@ export function __resetInMemoryLimits() {
   lastSweep = 0;
 }
 
-/** Closes the connection so a process can exit without a lingering socket. */
+/**
+ * Closes the shared connection so a process can exit without a lingering socket.
+ *
+ * Named for the rate limiter for historical reasons and kept that way: it is
+ * what the suite and the shutdown path already call. It now closes the
+ * connection the cache uses too, which is correct — there is only one.
+ */
 export async function disconnectRateLimitStore() {
-  if (client?.isReady) await client.quit();
-  client = null;
+  await disconnectRedis();
 }
