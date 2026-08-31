@@ -141,6 +141,27 @@ async function refundedBetween(from: Date, to: Date): Promise<number> {
   return agg._sum.amountCents ?? 0;
 }
 
+/**
+ * DELIBERATELY NOT CACHED, having been tried.
+ *
+ * These are the most expensive queries on the site — two windowed sums over
+ * every paid order, a daily series, two user counts, two refund totals — which
+ * makes them look like the obvious thing to cache. They are not, for two
+ * reasons that only became clear once it was wired up.
+ *
+ * The first is that there is nothing to relieve. A cache earns its place
+ * against LOAD, not against cost-per-query, and this page has one user opening
+ * it a few times a day. Saving a handful of queries buys nothing.
+ *
+ * The second is what it costs. Its inputs are every order and refund on the
+ * platform, so nothing short of invalidating on every payment would keep it
+ * honest — which puts dashboard bookkeeping inside the checkout path. The
+ * alternative, a plain TTL, means the dashboard quietly disagrees with the
+ * database: tests/browser/admin-dashboard.ts caught exactly that, reading
+ * $65 in gross sales while the database held $95.22.
+ *
+ * A moderator deciding whether to refund somebody needs the real number.
+ */
 export async function metrics(days: Range) {
   const now = new Date();
   const periodStart = daysAgo(days - 1);

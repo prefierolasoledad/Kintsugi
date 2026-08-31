@@ -1,3 +1,5 @@
+import { invalidate } from "./cache";
+import { listingKey } from "./cacheKeys";
 import { prisma } from "./prisma";
 import { events } from "./notifications";
 import {
@@ -225,7 +227,14 @@ export async function removeListing(input: {
 
   const listing = await prisma.listing.findUnique({
     where: { id: input.listingId },
-    select: { id: true, title: true, deletedAt: true, seller: { select: { userId: true } } },
+    // slug so the cached detail payload can be dropped after removal.
+    select: {
+      id: true,
+      slug: true,
+      title: true,
+      deletedAt: true,
+      seller: { select: { userId: true } },
+    },
   });
   if (!listing) throw new ModerationError("NOT_FOUND", "Listing not found.", 404);
   if (listing.deletedAt) {
@@ -238,6 +247,16 @@ export async function removeListing(input: {
     where: { id: listing.id },
     data: { deletedAt: new Date(), status: ListingStatus.REMOVED },
   });
+
+  /**
+   * Load-bearing.
+   *
+   * A moderator removes a listing precisely because it should stop being
+   * visible — usually urgently. Leaving it readable at its public URL for the
+   * rest of the TTL would make the moderation action look like it had not
+   * worked, which is the one place a stale cache is genuinely unacceptable.
+   */
+  await invalidate(listingKey(listing.slug));
 
   await record({
     moderatorId: input.moderatorId,
@@ -266,7 +285,7 @@ export async function restoreListing(input: {
 
   const listing = await prisma.listing.findUnique({
     where: { id: input.listingId },
-    select: { id: true, deletedAt: true },
+    select: { id: true, slug: true, deletedAt: true },
   });
   if (!listing) throw new ModerationError("NOT_FOUND", "Listing not found.", 404);
   if (!listing.deletedAt) {
@@ -279,6 +298,9 @@ export async function restoreListing(input: {
     where: { id: listing.id },
     data: { deletedAt: null, status: ListingStatus.DRAFT },
   });
+
+  // Drops the cached 404 from while it was removed.
+  await invalidate(listingKey(listing.slug));
 
   await record({
     moderatorId: input.moderatorId,

@@ -1,4 +1,5 @@
-import { requireServices } from "../lib/db";
+import { API, requireServices } from "../lib/db";
+import { Scope } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
 
 /**
@@ -19,8 +20,10 @@ import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
  * See docs/adr/0018-redis-for-shared-ephemeral-state.md
  */
 
+const scope = new Scope("cache");
 wireInterrupt();
 cleanupOnInterrupt(async () => {
+  await scope.cleanup();
   const { disconnectRedis } = await import("../../src/lib/redis");
   await disconnectRedis();
 });
@@ -64,7 +67,7 @@ async function withRedisUrl<T>(url: string | undefined, fn: () => Promise<T>): P
 void main(
   "cache seam",
   async (t) => {
-    await requireServices({ api: false, web: false, db: false });
+    await requireServices({ api: true, web: true, db: true });
 
     const {
       cached,
@@ -393,9 +396,79 @@ void main(
 
       t.check(exists === 0, "and nothing was written — an error is not a cacheable value", exists);
     });
+
+    /* ============================================================ *
+     * 11. The real endpoints.
+     *
+     * Sections 1-10 prove the seam behaves. This proves it is actually
+     * WIRED — that the routes populate the keys they are supposed to, and
+     * that the write paths drop them.
+     *
+     * The invalidation half is the part worth having. A cache that is never
+     * invalidated still returns correct-looking data for its whole TTL, so
+     * a missing invalidate() cannot be caught by reading a response; it can
+     * only be caught by writing and then reading again.
+     * ============================================================ */
+    t.section("11 - the routes populate and drop their keys");
+
+    const { listingKey, unreadKey } = await import("../../src/lib/cacheKeys");
+    const probe = createClient({ url: redisUrl });
+    await probe.connect();
+    const live = async (k: string) => (await probe.exists(`cache:v${CACHE_VERSION}:${k}`)) === 1;
+
+    try {
+      /* ---- the category shelf ---- */
+      await probe.del(`cache:v${CACHE_VERSION}:catalog:categories`);
+      await fetch(`${API}/catalog/categories`);
+      t.check(await live("catalog:categories"), "GET /catalog/categories fills its key");
+
+      /* ---- a listing, and the write that must clear it ---- */
+      const { seller, listing } = await scope.ownListing("owner", { priceCents: 4200 });
+
+      await fetch(`${API}/catalog/listings/${listing.slug}`);
+      t.check(await live(listingKey(listing.slug)), "GET a listing detail fills its key");
+
+      const edit = await seller.patch(`/api/seller/listings/${listing.id}`, {
+        priceCents: 5100,
+      });
+      t.check(edit.status === 200, "the seller repriced it", edit.status);
+      t.check(
+        !(await live(listingKey(listing.slug))),
+        "and the edit DROPPED the cached page — not left it to expire"
+      );
+
+      // The assertion that actually matters: the loop, end to end.
+      const after = await fetch(`${API}/catalog/listings/${listing.slug}`).then((r) => r.json());
+      t.check(
+        after.listing.priceCents === 5100,
+        "so the very next read shows the new price rather than the cached one",
+        after.listing.priceCents
+      );
+
+      /* ---- the unread badge ---- */
+      const buyer = await scope.buyer("bell");
+      const { prisma } = await import("../lib/db");
+      const user = await prisma.user.findUniqueOrThrow({
+        where: { email: scope.emailFor("bell") },
+        select: { id: true },
+      });
+
+      await buyer.get("/api/notifications/count");
+      t.check(await live(unreadKey(user.id)), "GET /notifications/count fills its key");
+
+      await buyer.post("/api/notifications/read-all");
+      t.check(
+        !(await live(unreadKey(user.id))),
+        "and marking everything read drops it, so the badge cannot stick"
+      );
+    } finally {
+      await probe.quit();
+    }
   },
-  async () => {
+  async (t) => {
     const { disconnectRedis } = await import("../../src/lib/redis");
     await disconnectRedis();
+    await scope.cleanup();
+    await scope.verifyClean(t);
   }
 );

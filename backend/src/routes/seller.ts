@@ -3,6 +3,8 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import multer from "multer";
 import { z } from "zod";
 import { processImageUpload, MAX_UPLOAD_BYTES, UploadError } from "../lib/imageProcessing";
+import { invalidate } from "../lib/cache";
+import { listingKey } from "../lib/cacheKeys";
 import { prisma } from "../lib/prisma";
 import { checkRateLimit } from "../lib/rateLimit";
 import { keyFromUrl, newKey, putFile, removeFile } from "../lib/storage";
@@ -207,6 +209,11 @@ sellerRouter.post("/listings", async (req, res) => {
       select: listingSelect,
     });
 
+    // A brand-new slug can already have a NEGATIVE cache entry: anything that
+    // probed the URL before it existed cached the 404. Without this the seller
+    // publishes and their own page still reports not-found.
+    await invalidate(listingKey(listing.slug));
+
     res.status(201).json({ listing });
   } catch (err) {
     console.error("POST /seller/listings failed", err);
@@ -270,6 +277,8 @@ sellerRouter.patch("/listings/:id", async (req, res) => {
       select: listingSelect,
     });
 
+    await invalidate(listingKey(listing.slug));
+
     res.json({ listing });
   } catch (err) {
     console.error("PATCH /seller/listings/:id failed", err);
@@ -303,6 +312,8 @@ sellerRouter.post("/listings/:id/publish", async (req, res) => {
       select: listingSelect,
     });
 
+    await invalidate(listingKey(updated.slug));
+
     res.json({ listing: updated });
   } catch (err) {
     console.error("POST /seller/listings/:id/publish failed", err);
@@ -328,6 +339,8 @@ sellerRouter.post("/listings/:id/unpublish", async (req, res) => {
       select: listingSelect,
     });
 
+    await invalidate(listingKey(updated.slug));
+
     res.json({ listing: updated });
   } catch (err) {
     console.error("POST /seller/listings/:id/unpublish failed", err);
@@ -348,6 +361,10 @@ sellerRouter.delete("/listings/:id", async (req, res) => {
       where: { id: listing.id },
       data: { deletedAt: new Date(), status: ListingStatus.REMOVED },
     });
+
+    // Load-bearing, not tidiness: without it a removed listing stays readable
+    // at its public URL for the rest of the TTL.
+    await invalidate(listingKey(listing.slug));
 
     res.status(204).end();
   } catch (err) {
@@ -415,6 +432,9 @@ sellerRouter.post("/listings/:id/images", singleImage, async (req, res) => {
       select: { id: true, url: true, alt: true, position: true },
     });
 
+    // Photos are part of the detail payload, so adding one makes it stale.
+    await invalidate(listingKey(listing.slug));
+
     res.status(201).json({ image });
   } catch (err) {
     if (err instanceof UploadError) {
@@ -444,6 +464,7 @@ sellerRouter.delete("/listings/:id/images/:imageId", async (req, res) => {
     }
 
     await prisma.listingImage.delete({ where: { id: image.id } });
+    await invalidate(listingKey(listing.slug));
 
     const key = keyFromUrl(image.url);
     if (key) await removeFile(key);

@@ -1,3 +1,5 @@
+import { cached, invalidate } from "./cache";
+import { UNREAD_TTL, unreadKey } from "./cacheKeys";
 import { prisma } from "./prisma";
 import { NotificationType } from "../generated/prisma/enums";
 
@@ -49,6 +51,7 @@ export async function notify(input: EmitInput): Promise<void> {
         link: input.link ?? null,
       },
     });
+    await invalidate(unreadKey(input.userId));
   } catch (err) {
     console.error(`Failed to notify ${input.userId} (${input.type})`, err);
   }
@@ -67,6 +70,9 @@ export async function notifyMany(inputs: EmitInput[]): Promise<void> {
         link: i.link ?? null,
       })),
     });
+    // One basket can notify several sellers, so every recipient's badge is
+    // stale, not just one.
+    await invalidate(...new Set(inputs.map((i) => unreadKey(i.userId))));
   } catch (err) {
     console.error(`Failed to notify ${inputs.length} recipient(s)`, err);
   }
@@ -108,8 +114,32 @@ export async function listNotifications(
   }));
 }
 
+/** The exact count, straight from the database. */
 export function countUnread(userId: string) {
   return prisma.notification.count({ where: { userId, readAt: null } });
+}
+
+/**
+ * The same number, cached — for the polling badge ONLY.
+ *
+ * CACHED BECAUSE OF HOW IT IS CALLED, not because the query is expensive.
+ * Every signed-in tab polls /notifications/count on a timer for as long as it
+ * stays open, so the load scales with tabs left open rather than with anything
+ * anyone does. It is the only endpoint in the codebase with that shape.
+ *
+ * NOT USED BY GET /notifications, deliberately.
+ * That route returns the unread LIST and the count in one payload. Serving a
+ * cached count beside a live list means the page can show three unread items
+ * under a badge reading zero — a contradiction inside a single response, which
+ * reads as a bug in a way that a slightly-late badge never does. It has already
+ * paid for a query there; one more costs nothing.
+ *
+ * Every write below drops this key, so a poller sees a number that is either
+ * current or at most one TTL behind — and it was already going to be that far
+ * behind between polls.
+ */
+export function cachedUnreadCount(userId: string) {
+  return cached(unreadKey(userId), UNREAD_TTL, () => countUnread(userId));
 }
 
 /** Scoped by user, so nobody can mark someone else's as read. */
@@ -118,6 +148,10 @@ export async function markRead(userId: string, notificationId: string) {
     where: { id: notificationId, userId, readAt: null },
     data: { readAt: new Date() },
   });
+  // Invalidated even when count is 0. The write may have changed nothing, but
+  // a cached count from before some *other* write is still worth dropping, and
+  // guessing wrong here shows up as a badge that will not clear.
+  await invalidate(unreadKey(userId));
   // Already-read is a success, not a 404: opening the same thing twice is
   // normal, and an error there would be noise.
   return count;
@@ -128,6 +162,7 @@ export async function markAllRead(userId: string) {
     where: { userId, readAt: null },
     data: { readAt: new Date() },
   });
+  await invalidate(unreadKey(userId));
   return count;
 }
 
@@ -135,6 +170,9 @@ export async function removeNotification(userId: string, notificationId: string)
   const { count } = await prisma.notification.deleteMany({
     where: { id: notificationId, userId },
   });
+  // Deleting an UNREAD notification lowers the count, so this is a write that
+  // changes the badge even though it never touches readAt.
+  await invalidate(unreadKey(userId));
   return count;
 }
 

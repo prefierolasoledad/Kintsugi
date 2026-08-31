@@ -1,3 +1,5 @@
+import { invalidate, invalidateMany } from "./cache";
+import { RATING_PREFIX, listingKey } from "./cacheKeys";
 import { prisma } from "./prisma";
 import { events } from "./notifications";
 import { OrderStatus } from "../generated/prisma/enums";
@@ -129,6 +131,26 @@ function validate(rating: number, body: string | null) {
  * An upsert rather than create-then-handle-conflict: two taps on Post are a
  * normal thing for a person to do, and the second must not be an error.
  */
+/**
+ * Drops everything a review write makes stale.
+ *
+ * TWO KEYS, NOT ONE. The obvious one is the rating aggregate. The other is the
+ * listing's detail payload, which embeds the twenty most recent reviews AND the
+ * star breakdown — so writing a review that does not clear it leaves the new
+ * review invisible on the very page it was written from, which reads as the
+ * write having failed.
+ *
+ * Called after the database write, never before: a concurrent read between an
+ * early invalidation and the commit would repopulate both keys from the old
+ * state, and the stale copy would outlive the write meant to clear it.
+ */
+async function dropReviewCaches(listingId: string, slug: string) {
+  await Promise.all([
+    invalidateMany(RATING_PREFIX, [listingId]),
+    invalidate(listingKey(slug)),
+  ]);
+}
+
 export async function upsertReview(input: {
   userId: string;
   listingId: string;
@@ -182,6 +204,8 @@ export async function upsertReview(input: {
     });
   }
 
+  await dropReviewCaches(input.listingId, review.listing.slug);
+
   return review;
 }
 
@@ -199,26 +223,48 @@ export async function editReview(input: {
   // an attacker something they shouldn't learn.
   const existing = await prisma.review.findFirst({
     where: { id: input.reviewId, authorId: input.userId },
-    select: { id: true },
+    // listingId and slug come back so the caches keyed on them can be dropped
+    // after the update. Both are needed: one keys the rating, the other the
+    // listing page that renders it.
+    select: { id: true, listingId: true, listing: { select: { slug: true } } },
   });
   if (!existing) {
     throw new ReviewError("NOT_FOUND", "Review not found.", 404);
   }
 
-  return prisma.review.update({
+  const updated = await prisma.review.update({
     where: { id: existing.id },
     data: { rating: input.rating, body: trimmed },
     select: { id: true, rating: true, body: true, createdAt: true, updatedAt: true },
   });
+
+  await dropReviewCaches(existing.listingId, existing.listing.slug);
+
+  return updated;
 }
 
 export async function deleteReview(userId: string, reviewId: string) {
-  const { count } = await prisma.review.deleteMany({
+  /**
+   * Read before the delete, rather than a single scoped deleteMany.
+   *
+   * deleteMany returns a count and nothing else, and once the row is gone there
+   * is no way to learn which listing it belonged to — so there is nothing left
+   * to invalidate, and the rating would stay stale for its full TTL with the
+   * review already gone from the page.
+   *
+   * Still scoped to the author, so the 404-rather-than-403 behaviour is
+   * unchanged: someone else's review is indistinguishable from a missing one.
+   */
+  const existing = await prisma.review.findFirst({
     where: { id: reviewId, authorId: userId },
+    select: { id: true, listingId: true, listing: { select: { slug: true } } },
   });
-  if (count === 0) {
+  if (!existing) {
     throw new ReviewError("NOT_FOUND", "Review not found.", 404);
   }
+
+  await prisma.review.delete({ where: { id: existing.id } });
+  await dropReviewCaches(existing.listingId, existing.listing.slug);
 }
 
 /**

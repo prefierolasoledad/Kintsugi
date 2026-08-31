@@ -1,5 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
+import { cached, cachedMany } from "../lib/cache";
+import {
+  CATEGORIES_KEY,
+  CATEGORY_TTL,
+  LISTING_TTL,
+  RATING_PREFIX,
+  RATING_TTL,
+  listingKey,
+} from "../lib/cacheKeys";
 import { prisma } from "../lib/prisma";
 import { ratingBreakdown, verifiedBuyers } from "../lib/reviews";
 import { ListingStatus, VerificationStatus } from "../generated/prisma/enums";
@@ -49,10 +58,16 @@ const NO_RATING: RatingAgg = { average: null, count: 0 };
  * Ratings are computed from review rows rather than stored on the listing, so a
  * displayed score always traces back to real reviews. One grouped query covers
  * a whole page of results.
+ *
+ * EVERY REQUESTED ID GETS AN ENTRY, including listings with no reviews at all.
+ *
+ * groupBy only returns rows that have reviews, and most listings do not. Left
+ * as-is, every one of them would be a cache MISS on each read — stored as a
+ * negative with the short negative TTL, re-queried constantly, and the common
+ * case would be the one the cache never helps with. Filling the gaps with
+ * NO_RATING makes "this has no reviews" a cached fact like any other.
  */
-async function ratingsFor(listingIds: string[]): Promise<Map<string, RatingAgg>> {
-  if (listingIds.length === 0) return new Map();
-
+async function loadRatings(listingIds: string[]): Promise<Map<string, RatingAgg>> {
   const grouped = await prisma.review.groupBy({
     by: ["listingId"],
     where: { listingId: { in: listingIds } },
@@ -60,7 +75,7 @@ async function ratingsFor(listingIds: string[]): Promise<Map<string, RatingAgg>>
     _count: { rating: true },
   });
 
-  return new Map(
+  const withReviews = new Map(
     grouped.map((g) => [
       g.listingId,
       {
@@ -69,6 +84,13 @@ async function ratingsFor(listingIds: string[]): Promise<Map<string, RatingAgg>>
       },
     ])
   );
+
+  return new Map(listingIds.map((id) => [id, withReviews.get(id) ?? NO_RATING]));
+}
+
+async function ratingsFor(listingIds: string[]): Promise<Map<string, RatingAgg>> {
+  if (listingIds.length === 0) return new Map();
+  return cachedMany<RatingAgg>(RATING_PREFIX, listingIds, RATING_TTL, loadRatings);
 }
 
 /** How long a listing reads as "new". A week, matching the badge's wording. */
@@ -120,21 +142,25 @@ function serializeListing(row: ListingRow, rating: RatingAgg) {
 
 catalogRouter.get("/categories", async (_req, res) => {
   try {
-    const rows = await prisma.category.findMany({
-      orderBy: { position: "asc" },
-      include: { _count: { select: { listings: { where: VISIBLE } } } },
-    });
+    // Cached whole rather than per-category: it is one query producing one
+    // response, and the shelf is read on nearly every page.
+    const categories = await cached(CATEGORIES_KEY, CATEGORY_TTL, async () => {
+      const rows = await prisma.category.findMany({
+        orderBy: { position: "asc" },
+        include: { _count: { select: { listings: { where: VISIBLE } } } },
+      });
 
-    res.json({
-      categories: rows.map((c) => ({
+      return rows.map((c) => ({
         id: c.id,
         slug: c.slug,
         title: c.title,
         description: c.description,
         coverImage: c.coverImage,
         listingCount: c._count.listings,
-      })),
+      }));
     });
+
+    res.json({ categories });
   } catch (err) {
     console.error("GET /catalog/categories failed", err);
     res.status(500).json({ error: "Could not load categories." });
@@ -240,15 +266,31 @@ catalogRouter.get("/listings", async (req, res) => {
   }
 });
 
-catalogRouter.get("/listings/:slug", async (req, res) => {
-  try {
+/**
+ * The whole detail payload for one listing, or null if there is nothing to show.
+ *
+ * Extracted so the route is a cache lookup and this is the loader. Returning
+ * null rather than throwing for "not found" is what lets the miss be cached
+ * too — a crawler walking unknown slugs would otherwise reach the database on
+ * every single request while the cache reported a perfect hit rate.
+ *
+ * SIX QUERIES, which is why this is worth caching at all: the listing, its
+ * rating, its star breakdown, which reviewers actually bought it, four related
+ * listings, and their ratings.
+ *
+ * The payload is the same for every viewer — `authorId` is sent so the client
+ * can mark the reader's own review, rather than the server deciding — so one
+ * cached copy serves everyone. A payload that varied by viewer would need the
+ * viewer in the key, and at that point it is not worth caching.
+ */
+async function buildListingDetail(slug: string) {
     // Detail pages stay reachable once an item is held or sold — a buyer who
     // holds the last one must still be able to open its page, and a public URL
     // that 404s the moment stock runs out is a broken link. Lists and search
     // continue to show only ACTIVE.
     const row = await prisma.listing.findFirst({
       where: {
-        slug: req.params.slug,
+        slug,
         deletedAt: null,
         status: {
           in: [ListingStatus.ACTIVE, ListingStatus.RESERVED, ListingStatus.SOLD],
@@ -274,9 +316,7 @@ catalogRouter.get("/listings/:slug", async (req, res) => {
       },
     });
 
-    if (!row) {
-      return res.status(404).json({ error: "Listing not found.", code: "NOT_FOUND" });
-    }
+    if (!row) return null;
 
     const ratings = await ratingsFor([row.id]);
     const breakdown = await ratingBreakdown(row.id);
@@ -293,7 +333,7 @@ catalogRouter.get("/listings/:slug", async (req, res) => {
     });
     const relatedRatings = await ratingsFor(related.map((r) => r.id));
 
-    res.json({
+    return {
       listing: {
         ...serializeListing(row, ratings.get(row.id) ?? NO_RATING),
         /**
@@ -323,7 +363,20 @@ catalogRouter.get("/listings/:slug", async (req, res) => {
       related: related.map((r) =>
         serializeListing(r, relatedRatings.get(r.id) ?? NO_RATING)
       ),
-    });
+    };
+}
+
+catalogRouter.get("/listings/:slug", async (req, res) => {
+  try {
+    const body = await cached(listingKey(req.params.slug), LISTING_TTL, () =>
+      buildListingDetail(req.params.slug)
+    );
+
+    if (!body) {
+      return res.status(404).json({ error: "Listing not found.", code: "NOT_FOUND" });
+    }
+
+    res.json(body);
   } catch (err) {
     console.error("GET /catalog/listings/:slug failed", err);
     res.status(500).json({ error: "Could not load listing." });

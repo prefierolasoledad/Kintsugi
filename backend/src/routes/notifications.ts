@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
 import {
+  cachedUnreadCount,
   countUnread,
   listNotifications,
   markAllRead,
@@ -52,7 +53,9 @@ notificationsRouter.get("/", async (req, res) => {
  */
 notificationsRouter.get("/count", async (req, res) => {
   try {
-    res.json({ unread: await countUnread(req.userId!) });
+    // The cached variant, and the only place that uses it — this is the one
+    // endpoint every open tab polls on a timer. See lib/notifications.ts.
+    res.json({ unread: await cachedUnreadCount(req.userId!) });
   } catch (err) {
     fail(res, err, "Could not count your notifications.");
   }
