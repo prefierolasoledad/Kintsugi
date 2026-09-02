@@ -129,3 +129,11 @@ posture arrived at by accident.
 so a catalogue cache would produce a flattering graph and little else. Redis
 earns its place here for correctness, not speed, and mixing the two would blur
 why it is present.
+
+> **Revisited.** This was later reversed — see
+> [ADR 0019](0019-cache-tiering-rule.md). The objection above was not wrong and
+> is quoted in full there: the database is still not the bottleneck. What
+> changed is that the read paths were measured (eight to twelve round trips per
+> listing page) and that a placement rule with written exclusions now exists,
+> which is what stops the cache becoming the second source of truth this
+> paragraph was guarding against.

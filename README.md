@@ -122,6 +122,40 @@ For a catalogue large enough to make pagination and search mean something:
 npm run seed:scale          # 900 more listings across 30 sellers
 ```
 
+### Measuring the infrastructure
+
+Two scripts exist to make claims about scaling checkable rather than asserted.
+
+```bash
+REDIS_URL=redis://localhost:6379 npx tsx scripts/cache-demo.ts
+```
+
+Fires 120 requests across 120 distinct listing pages, cold then warm, against
+the same process. Database transactions are counted from Postgres's own
+`xact_commit` rather than by instrumenting the app — an app-side counter
+measures what the code *believes* it did, and the question is whether the queries
+reached the database at all.
+
+|  | Cold | Warm |
+| --- | --- | --- |
+| p50 | 103ms | 8ms |
+| p95 | 276ms | 23ms |
+| Database transactions | 928 | 0 |
+
+```bash
+# three API instances, sharing nothing
+for p in 4001 4002 4003; do PORT=$p npm start & done
+
+npx tsx scripts/ratelimit-demo.ts \
+  --targets http://localhost:4001,http://localhost:4002,http://localhost:4003
+```
+
+Spreads 40 password-change attempts round-robin across three API instances
+against a stated limit of 10 per 15 minutes. Sharing nothing, **30 get through**
+— each instance enforcing its own count correctly while the aggregate is wrong.
+Sharing Redis, 10 do. See [ADR 0019](docs/adr/0019-cache-tiering-rule.md) and
+[ADR 0018](docs/adr/0018-redis-for-shared-ephemeral-state.md).
+
 ## Documentation
 
 The README stays deliberately short. Everything else lives in [`docs/`](docs/):
@@ -133,7 +167,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 18 ADRs on why things are built the way they are |
+| [Decision records](docs/adr/README.md) | 19 ADRs on why things are built the way they are |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
