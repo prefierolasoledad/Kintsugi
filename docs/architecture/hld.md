@@ -47,6 +47,7 @@ from a fork gets a meaningful green run without any credentials. See
 | **API** | Express 4, Node | Business rules, persistence, authorisation, image processing |
 | **Database** | PostgreSQL 16 | System of record |
 | **Cache & counters** | Redis 7 | Rate-limit counters and read-through cache. Holds nothing that must survive a restart — see [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md) |
+| **Standby** *(opt-in)* | PostgreSQL 16 | A byte-for-byte streaming clone, ~11ms behind. Read-only, and nothing queries it — it exists to be promoted. `--profile ha`. See [ADR 0020](../adr/0020-replication-and-backups.md) |
 | **Image store** | Disk (dev) | Processed seller photos, served over HTTP |
 
 Two Node processes, deliberately. The Next.js server holds no business logic —
@@ -275,10 +276,18 @@ replaces those three.
   `tsvector` index with ranking is the upgrade path.
 - **Pagination is offset-based.** Simple and right for numbered result pages;
   deep offsets degrade.
-- **One database, no replica and no backups.** Compose runs a single Postgres.
-  Streaming replication and WAL archiving for point-in-time recovery are the
-  next infrastructure work — along with rehearsing a restore, since a backup
-  that has never been restored is not a backup.
+- **No backups.** A streaming standby exists and is verified — see
+  [ADR 0020](../adr/0020-replication-and-backups.md) — but replication is not
+  backup: it copies a mistaken `DROP TABLE` faithfully and in milliseconds.
+  WAL archiving for point-in-time recovery is outstanding, along with rehearsing
+  a restore, since a backup that has never been restored is not a backup.
+- **Failover is manual.** Nothing promotes the standby. Compose cannot express
+  it; CloudNativePG can, which is part of why Kubernetes is next.
+- **Nothing reads from the replica**, deliberately. Routing reads to a standby
+  introduces read-your-writes bugs — a buyer landing on an order list that has
+  not replayed their order — and the caching in
+  [ADR 0019](../adr/0019-cache-tiering-rule.md) already absorbed the read volume
+  a replica would have relieved.
 - **Aggregate ratings are computed per request.** One extra grouped query per
   page. Denormalising onto `Listing` is the optimisation, at the cost of
   keeping it consistent.

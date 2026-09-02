@@ -40,15 +40,65 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     sleep 2
   done
 
+  # ----------------------------------------------------------------
+  # Does the slot already exist?
+  #
+  # THE SLOT LIVES ON THE PRIMARY, NOT HERE. So deleting this container's
+  # volume to rebuild the standby does not remove it, and `pg_basebackup
+  # --create-slot` then fails with "replication slot already exists". With
+  # `restart: unless-stopped` in front of it, that is not a failure — it is an
+  # infinite crashloop that also pins WAL on the primary forever.
+  #
+  # Found by deleting the volume and rebuilding, which is exactly the operation
+  # somebody performs when a standby has gone wrong.
+  # ----------------------------------------------------------------
+  slot_state=$(
+    PGPASSWORD="$PGPASSWORD" psql \
+      --host="$PRIMARY_HOST" --port="$PRIMARY_PORT" \
+      --username="$REPL_USER" --dbname=postgres \
+      --tuples-only --no-align --quiet \
+      --command="SELECT coalesce(
+                   (SELECT CASE WHEN active THEN 'active' ELSE 'inactive' END
+                      FROM pg_replication_slots WHERE slot_name = '${SLOT}'),
+                   'absent')" 2>/dev/null || echo "unknown"
+  )
+
+  case "$slot_state" in
+    absent)
+      echo "standby: slot '${SLOT}' does not exist — creating it"
+      CREATE_SLOT="--create-slot"
+      ;;
+    inactive)
+      # The normal rebuild case: a previous standby left its slot behind. Reuse
+      # it. This is also why the WAL it has been retaining is still there.
+      echo "standby: reusing existing inactive slot '${SLOT}'"
+      CREATE_SLOT=""
+      ;;
+    active)
+      # Something else is streaming through this slot. Two standbys sharing one
+      # slot is not a race worth entering, and retrying cannot fix it.
+      echo "standby: FATAL — slot '${SLOT}' is already ACTIVE." >&2
+      echo "standby: another standby is using it. Give this one its own" >&2
+      echo "standby: REPLICATION_SLOT, or drop the slot on the primary:" >&2
+      echo "standby:   SELECT pg_drop_replication_slot('${SLOT}');" >&2
+      exit 1
+      ;;
+    *)
+      echo "standby: could not determine the state of slot '${SLOT}'" >&2
+      exit 1
+      ;;
+  esac
+
   # -R  writes standby.signal and primary_conninfo, so this directory boots as
   #     a standby with no further configuration.
-  # -C -S creates a physical replication SLOT named $SLOT. Without one the
-  #     primary is free to recycle WAL the standby has not consumed yet, and a
-  #     standby that falls behind during a restart never catches up — it fails
-  #     with "requested WAL segment has already been removed" and has to be
-  #     rebuilt from scratch. The slot makes the primary keep that WAL instead.
+  # -S  binds to the physical replication SLOT. Without a slot the primary is
+  #     free to recycle WAL the standby has not consumed yet, and a standby that
+  #     falls behind during a restart never catches up — it fails with
+  #     "requested WAL segment has already been removed" and has to be rebuilt.
+  #     The slot makes the primary retain that WAL instead.
   # -Xs streams WAL during the copy, so a long clone cannot outrun its own
   #     starting point.
+  # shellcheck disable=SC2086  # CREATE_SLOT is deliberately word-split or empty
   PGPASSWORD="$PGPASSWORD" pg_basebackup \
     --host="$PRIMARY_HOST" \
     --port="$PRIMARY_PORT" \
@@ -57,7 +107,7 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     --format=plain \
     --wal-method=stream \
     --write-recovery-conf \
-    --create-slot --slot="$SLOT" \
+    --slot="$SLOT" $CREATE_SLOT \
     --checkpoint=fast \
     --progress \
     --verbose

@@ -1,7 +1,8 @@
 # Architecture
 
 Kintsugi is a four-container system: a Next.js server, an Express API,
-PostgreSQL, and Redis. The browser talks only to Next.js.
+PostgreSQL, and Redis — plus an optional fifth, a streaming Postgres standby.
+The browser talks only to Next.js.
 
 ```mermaid
 flowchart LR
@@ -10,6 +11,7 @@ flowchart LR
     E["Express API"]
     P[("PostgreSQL<br/><i>source of truth</i>")]
     R[("Redis<br/><i>safe to lose</i>")]
+    S[("Standby<br/><i>opt-in, read-only</i>")]
     F[["Uploaded images<br/>(disk / object storage)"]]
 
     B -->|HTTPS, session cookies| N
@@ -18,10 +20,15 @@ flowchart LR
     E -.->|"counters, cache"| R
     E --> F
     B -.->|"img src only"| F
+    P ==>|"streams WAL"| S
 ```
 
 The dotted line to Redis is the point: pull it out and the site is slower and
 still correct.
+
+Nothing points *at* the standby, and that is also the point. It is a spare
+primary, not a read replica — see
+[ADR 0020](../adr/0020-replication-and-backups.md).
 
 Documentation is split by the level of detail you need, following the
 [C4 model](https://c4model.com)'s idea of separate diagrams for separate

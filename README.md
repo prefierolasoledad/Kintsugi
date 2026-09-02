@@ -143,6 +143,21 @@ reached the database at all.
 | Database transactions | 928 | 0 |
 
 ```bash
+docker compose --profile ha up -d postgres-replica
+npx tsx scripts/replication-demo.ts
+```
+
+Checks the four things that have to be true of a standby — a second Postgres
+that starts without error is indistinguishable from an empty database nobody is
+streaming to, since both are healthy and both answer queries. Then commits five
+rows on the primary and times their arrival: **median 11.1ms**.
+
+It also states what replication is *not*. A standby copies `DROP TABLE orders`
+faithfully and in milliseconds; surviving a mistake needs point-in-time
+recovery, which is the outstanding half of
+[ADR 0020](docs/adr/0020-replication-and-backups.md).
+
+```bash
 # three API instances, sharing nothing
 for p in 4001 4002 4003; do PORT=$p npm start & done
 
@@ -167,7 +182,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 19 ADRs on why things are built the way they are |
+| [Decision records](docs/adr/README.md) | 20 ADRs on why things are built the way they are |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
@@ -249,9 +264,11 @@ never learns the backend's address. See
   and can be refunded from it; paying sellers out needs Stripe Connect.
 - **Object storage for uploads.** Local disk works and is wrong for more than
   one replica. `lib/storage.ts` exists as the seam to replace.
-- **Kubernetes, replication, and backups.** Compose is the deployment story
-  today. Next is a Postgres replica, WAL archiving for point-in-time recovery,
-  and a restore actually rehearsed rather than assumed.
+- **Backups, and Kubernetes.** A streaming standby exists
+  (`docker compose --profile ha up -d postgres-replica`) and is verified, but a
+  replica is not a backup — it copies a mistaken `DROP TABLE` as faithfully as
+  anything else. Next is WAL archiving for point-in-time recovery, and a restore
+  actually rehearsed rather than assumed.
 
 Placeholder screens say so explicitly rather than presenting controls that
 don't work.
