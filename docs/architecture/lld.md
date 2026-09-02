@@ -49,12 +49,16 @@ flowchart TB
 | `auth.ts` | Hashing, JWT sign/verify, cookie helpers | bcrypt cost 12; access TTL 15 min |
 | `refreshTokens.ts` | Issue, rotate, revoke | Reuse detection lives here |
 | `emailVerification.ts` | Issue and consume magic-link tokens | Token hashed; single-use via `usedAt` |
-| `mailer.ts` | Send verification email | **Stub** — logs to console |
+| `mailer.ts` | Send transactional mail | Three transports: console, Ethereal, real SMTP |
 | `passwordBreach.ts` | Pwned Passwords k-anonymity check | Fails open |
 | `storage.ts` | Put/remove files, derive public URLs | **Storage seam**; keys validated against a strict pattern |
 | `imageProcessing.ts` | Validate and re-encode uploads | Magic bytes, EXIF stripping, bounds |
-| `kycProvider.ts` | Start session, apply decision | **Stub**; shaped like Stripe Identity |
-| `rateLimit.ts` | Fixed-window counter | In-process; needs Redis to scale out |
+| `kycProvider.ts` | Start session, apply decision | Stripe Identity, or a stub behind the same seam |
+| `paymentProvider.ts` | Intents, refunds, webhook verification | Stripe, or a stub behind the same seam |
+| `refunds.ts` | Issue, settle, cap | Over-refund guard is an atomic conditional UPDATE |
+| `rateLimit.ts` | Fixed-window counter | Redis + Lua, shared across instances |
+| `cache.ts` | Read-through cache | Cache-aside, fail-open, stale-while-revalidate |
+| `cacheKeys.ts` | Every cache key and TTL | One file, so invalidation is discoverable |
 
 ### Frontend modules
 
@@ -189,9 +193,9 @@ stateDiagram-v2
     [*] --> DRAFT: POST /seller/listings
     DRAFT --> ACTIVE: publish (requires a photo)
     ACTIVE --> DRAFT: unpublish
-    ACTIVE --> RESERVED: checkout hold [not built]
-    RESERVED --> SOLD: payment settles [not built]
-    RESERVED --> ACTIVE: hold expires [not built]
+    ACTIVE --> RESERVED: checkout hold (row lock)
+    RESERVED --> SOLD: payment settles
+    RESERVED --> ACTIVE: hold expires
     DRAFT --> REMOVED: delete (soft)
     ACTIVE --> REMOVED: delete (soft)
     SOLD --> [*]

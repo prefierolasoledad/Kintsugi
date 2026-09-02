@@ -1,22 +1,27 @@
 # Architecture
 
-Kintsugi is a three-container system: a Next.js server, an Express API, and
-PostgreSQL. The browser talks only to Next.js.
+Kintsugi is a four-container system: a Next.js server, an Express API,
+PostgreSQL, and Redis. The browser talks only to Next.js.
 
 ```mermaid
 flowchart LR
     B["Browser"]
     N["Next.js server<br/>(UI + BFF)"]
     E["Express API"]
-    P[("PostgreSQL")]
+    P[("PostgreSQL<br/><i>source of truth</i>")]
+    R[("Redis<br/><i>safe to lose</i>")]
     F[["Uploaded images<br/>(disk / object storage)"]]
 
     B -->|HTTPS, session cookies| N
     N -->|"server-to-server<br/>cookies relayed"| E
     E --> P
+    E -.->|"counters, cache"| R
     E --> F
     B -.->|"img src only"| F
 ```
+
+The dotted line to Redis is the point: pull it out and the site is slower and
+still correct.
 
 Documentation is split by the level of detail you need, following the
 [C4 model](https://c4model.com)'s idea of separate diagrams for separate
@@ -53,3 +58,9 @@ audiences:
    records rather than stored as a number, so a rating always corresponds to
    reviews that exist.
    → [ADR 0009](../adr/0009-computed-ratings.md)
+
+6. **Postgres is the only source of truth.** Anything that must be correct
+   under concurrency arbitrates there — stock under a row lock, the payment
+   claim, refund headroom, TOTP replay. Redis holds only counters that expire
+   and copies that can be rebuilt, so losing it costs latency and never data.
+   → [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md)

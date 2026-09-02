@@ -684,9 +684,11 @@ erroring.
 ```json
 { "reason": "Broke while I was packing it, sorry." }
 ```
-Returns `refundOwed: true`. **Nothing is refunded** — refunds are not built. The
-buyer has paid for something they will not receive, and the flag exists so the
-UI says so rather than implying the matter is settled.
+Refunds that line automatically, for exactly what was paid for it — not the
+whole order, since a basket can span sellers and one seller failing to post says
+nothing about the others. The refund is attributed to the seller rather than to
+a moderator, carries their stated reason, and notifies the buyer that the money
+is on its way back. See [ADR 0016](adr/0016-refunds-claim-then-refund.md).
 
 ---
 
@@ -754,9 +756,10 @@ Two separate gates, and being past the first does not get you past the second.
 **👮 = a live admin session**, which is *not* the ordinary login cookie. It is a
 distinct `kintsugi_admin` cookie, signed with a secret derived from
 `JWT_SECRET`, lasting **30 minutes**. Obtaining one needs the password **again**
-plus a TOTP code. See [ADR 0006](adr/0006-verification.md) for the identity
-side; the reasoning here is the same — a stolen shopping cookie must not carry
-the power to suspend accounts.
+plus a TOTP code. See
+[ADR 0006](adr/0006-kyc-store-reference-not-document.md) for the identity side;
+the reasoning here is the same — a stolen shopping cookie must not carry the
+power to suspend accounts.
 
 `role: ADMIN` is granted **only by CLI** (`npm run admin:grant`). There is no
 promotion endpoint, and adding one would defeat the arrangement: the whole

@@ -352,9 +352,13 @@ npx prisma studio                      # browse data
 
 ## Seed
 
-`npx prisma db seed` → 5 categories, 13 listings, 46 reviews, 12 reviewer
+`npx prisma db seed` → 7 categories, 27 listings, 89 reviews, 12 reviewer
 accounts, and one house seller ("Kintsugi Collection") that owns the seeded
 inventory so `sellerId` can stay non-nullable.
+
+`npm run seed:scale` adds 30 seller accounts with 30 listings each — 900 more —
+for the browse and pagination suites, which assert things that are only true of
+a large catalogue.
 
 Every write is an upsert keyed on a unique column, so re-running converges
 instead of duplicating.

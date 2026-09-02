@@ -81,13 +81,18 @@ enforced in the API, and disabled UI is always re-checked server-side.
 
 Tracked, not hidden:
 
-- **Rate limiting is in-process.** Correct for a single instance; replicas would
-  each get their own allowance. Needs Redis before scaling out. Currently
-  applied to uploads (30/hr) and verification attempts (5/hr) — not to
-  login, which should have it.
-- **Single-flight refresh is also per-process.** Behind more than one instance,
-  concurrent refreshes would again trip reuse detection and revoke live
-  sessions. The backend needs a reuse grace window before scaling out.
+- **Login is not rate limited.** Eleven endpoints are — admin step-up (8 per
+  15 min, the only reason a six-digit TOTP is not brute-forceable), password
+  change, password reset, uploads, identity attempts, reports — and the counters
+  are shared across instances via Redis, so they hold under replicas rather than
+  silently multiplying by the replica count.
+  → [ADR 0018](docs/adr/0018-redis-for-shared-ephemeral-state.md)
+
+  Login itself still has none, and should.
+- **The BFF's single-flight refresh is per-process.** Behind more than one
+  frontend instance, concurrent refreshes would trip reuse detection and revoke
+  live sessions. This is the outstanding half of ADR 0018: the counters moved to
+  Redis, the refresh lock has not.
   → [ADR 0001](docs/adr/0001-access-and-refresh-tokens.md)
 - **No CSRF tokens.** `sameSite=lax` cookies plus a same-origin BFF cover the
   common cases, but state-changing requests have no additional token. Worth

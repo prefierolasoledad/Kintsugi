@@ -142,24 +142,39 @@ Ship docs with the code, in the same change:
 
 ## Testing
 
-**There is no test runner wired up.** Being straight about that: each phase was
-verified with throwaway scripts — Node scripts hitting the API directly, and
-Playwright scripts driving a real browser — run once, checked, and deleted. That
-covered roughly 140 assertions across the four phases, including refresh-token
-rotation and reuse detection, ownership isolation between sellers, EXIF removal
-end to end, and both KYC outcome paths.
+```bash
+cd backend
+npm test                    # everything — 789 assertions, 22 suites
+npm test -- api             # only the API suites
+npm test -- refunds         # any suite whose name matches
+```
 
-That approach caught real bugs, including two the UI hid: a BFF proxy that
-corrupted binary uploads, and images that silently failed to render while a
-weaker assertion reported success. But deleted scripts don't protect against
-regressions.
+**These are end-to-end tests. They need the real stack running** — Postgres,
+Redis, the API, and the frontend. `tests/run.ts` checks for all four before it
+starts and tells you which one is missing rather than failing obscurely on the
+first suite.
 
-Making this real means adding Vitest for units and integration against a test
-database, plus Playwright as a committed suite, with the seed as fixture. Until
-then, if you change something, verify it by actually running it — and assert on
-outcomes, not on the presence of elements. Counting `<img>` tags reported a
-passing upload while every image on the page was actually broken; checking
-`naturalWidth > 0` is what caught it.
+Nothing is mocked. The bugs worth catching here live in the seams between the
+pieces — the BFF proxy, the payment claim, the row lock — and a mock of the
+piece on the other side of a seam cannot fail the way the real one does.
+
+**Assert on outcomes, not on the presence of elements.** Counting `<img>` tags
+once reported a passing upload while every image on the page was broken;
+checking `naturalWidth > 0` is what caught it.
+
+**Watch for fire-and-forget writes.** Notifications are emitted without being
+awaited, so a test that reads straight after the action that triggers one is
+racing it. Six suites had this bug. Use `awaitNotifications()` from
+`tests/lib/fixtures.ts` rather than a sleep — see `tests/README.md`.
+
+**Drive the API, not the library.** Importing a function like `markUnfulfillable`
+and calling it runs the code in the *test* process, against its own in-memory
+state, while the server the rest of the suite is talking to knows nothing about
+it. Three suites did this and would have passed forever without testing
+anything. `Scope.ownListing()` exists so the seller side can be driven properly.
+
+Adding a suite means registering it in `tests/run.ts`. CI runs the whole thing
+on every push and pull request.
 
 ## Security
 

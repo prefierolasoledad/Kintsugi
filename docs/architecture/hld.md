@@ -18,9 +18,10 @@ flowchart TB
 
     subgraph ext["External systems"]
         Pwned["Pwned Passwords API<br/><i>k-anonymity breach check</i>"]
-        Mail["Email provider<br/><i>NOT WIRED — logs to console</i>"]
-        Kyc["Identity provider<br/><i>NOT WIRED — deterministic stub</i>"]
-        CDN["Image hosting<br/><i>local disk in dev</i>"]
+        Mail["Email provider<br/><i>SMTP via nodemailer</i>"]
+        Kyc["Stripe Identity<br/><i>test mode; stub behind a seam</i>"]
+        Pay["Stripe Payments<br/><i>test mode; stub behind a seam</i>"]
+        CDN["Image hosting<br/><i>local disk — object storage is the seam</i>"]
     end
 
     Buyer --> K
@@ -28,11 +29,14 @@ flowchart TB
     K -->|"SHA-1 prefix only"| Pwned
     K -.-> Mail
     K -.-> Kyc
+    K -.->|"intents, refunds, webhooks"| Pay
     K --> CDN
 ```
 
-Dotted lines are seams with stub implementations. They are real interfaces with
-fake bodies, not missing code — see
+Dotted lines are **provider seams**: one interface with a real integration and a
+stub behind it, selected by an environment variable. The stub is not a
+placeholder for missing code — it is what CI runs against, so a pull request
+from a fork gets a meaningful green run without any credentials. See
 [§6 Deliberate stubs](#6-deliberate-stubs).
 
 ## 2. Containers
@@ -42,6 +46,7 @@ fake bodies, not missing code — see
 | **Storefront + BFF** | Next.js 16, Node | Renders the UI; proxies all browser API traffic to Express |
 | **API** | Express 4, Node | Business rules, persistence, authorisation, image processing |
 | **Database** | PostgreSQL 16 | System of record |
+| **Cache & counters** | Redis 7 | Rate-limit counters and read-through cache. Holds nothing that must survive a restart — see [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md) |
 | **Image store** | Disk (dev) | Processed seller photos, served over HTTP |
 
 Two Node processes, deliberately. The Next.js server holds no business logic —
@@ -222,39 +227,58 @@ regenerated when the title changes, so existing links keep working.
 **Errors.** Every route wraps its handler; failures log server-side with
 context and return a generic message. Internal details are not sent to clients.
 
-## 6. Deliberate stubs
+## 6. Provider seams
 
-Three integrations are interfaces with fake implementations. Each is a single
-module, chosen so that going live means editing one file.
+Four concerns sit behind an interface with two implementations — a real one and
+a stub — selected by an environment variable. Each is a single module, so
+changing provider means editing one file.
 
-| Concern | Module | Stub behaviour | Production path |
-| --- | --- | --- | --- |
-| Email | `lib/mailer.ts` | Logs the verification link | Resend, SES, Postmark |
-| File storage | `lib/storage.ts` | Writes to local disk | S3, R2, Cloudinary |
-| Identity | `lib/kycProvider.ts` | Deterministic outcomes by document-number suffix | Stripe Identity, Persona, Onfido |
+| Concern | Module | Real | Stub | Selected by |
+| --- | --- | --- | --- | --- |
+| Payments | `lib/paymentProvider.ts` | Stripe PaymentIntents + Refunds | In-process intents with test card numbers | `PAYMENT_PROVIDER` |
+| Identity | `lib/kycProvider.ts` | Stripe Identity | Deterministic outcomes by document-number suffix | `KYC_PROVIDER` |
+| Email | `lib/mailer.ts` | SMTP via nodemailer | Console, or Ethereal's throwaway inbox | `MAIL_TRANSPORT` |
+| File storage | `lib/storage.ts` | — | Local disk | *(not yet swappable)* |
 
-`lib/kycProvider.ts` mirrors Stripe Identity's shape deliberately —
-`startSession()` ≈ `verificationSessions.create()`, `decide()` ≈ the webhook
-that follows — so the swap is mechanical rather than a redesign.
+**The stubs are not placeholders for missing code.** They are what CI runs
+against: the suite drives the whole purchase, refund and verification flow with
+no credentials configured, which is why a pull request from a fork — unable to
+read repository secrets — still gets a meaningful green run. The Stripe paths
+are exercised separately against test mode.
 
 The API reports `isStub: true` and the UI says so on screen. A stub that
 silently looks real is worse than no stub.
 
+File storage is the one seam with no second implementation yet. `putFile`,
+`removeFile` and `publicUrl` are the whole surface; S3, R2 or Cloudinary
+replaces those three.
+
 ## 7. Known limitations
 
-- **No checkout.** Consequently `ListingStatus.RESERVED` and
-  `payoutsEnabled` exist but nothing consumes them yet.
-- **Concurrency for unique items is unsolved.** Most stock is quantity 1, so
-  the hard problem is two buyers claiming one chair. `RESERVED` is the intended
-  mechanism; the transaction boundary arrives with checkout.
-- **Rate limiting is in-process.** Correct for one instance; replicas would each
-  get their own allowance. Needs a shared store (Redis) before scaling out.
-- **Search is substring matching** (`ILIKE`). Fine at this size; a Postgres
+- **No payouts to sellers.** The largest remaining gap. Money reaches the
+  platform and can be refunded from it; paying sellers out needs Stripe Connect.
+  `payoutsEnabled` is set by identity verification and nothing consumes it yet.
+- **Uploads live on local disk.** They do not survive a replacement container
+  and are not shared between replicas — which means the API cannot currently be
+  run with more than one replica, whatever else is shared. This is why the
+  storage seam exists. It also means seller photos do not render under Compose:
+  the browser loads them from `localhost:4000`, unreachable from inside the web
+  container.
+- **The BFF's single-flight refresh memo is process-local.** Refresh tokens
+  rotate on use and presenting a rotated one is treated as theft. Behind a load
+  balancer, two concurrent requests can land on different frontend instances,
+  both refresh, and the second looks like a replay — signing the user out
+  everywhere. Recorded as unfinished in
+  [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md).
+- **Search is substring matching** (`ILIKE '%q%'`), which cannot use a B-tree
+  index, so every search is a sequential scan. Fine at this size; a Postgres
   `tsvector` index with ranking is the upgrade path.
 - **Pagination is offset-based.** Simple and right for numbered result pages;
   deep offsets degrade.
-- **Local disk storage does not survive a container restart.** This is why the
-  storage seam exists.
+- **One database, no replica and no backups.** Compose runs a single Postgres.
+  Streaming replication and WAL archiving for point-in-time recovery are the
+  next infrastructure work — along with rehearsing a restore, since a backup
+  that has never been restored is not a backup.
 - **Aggregate ratings are computed per request.** One extra grouped query per
   page. Denormalising onto `Listing` is the optimisation, at the cost of
   keeping it consistent.
