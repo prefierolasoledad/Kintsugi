@@ -81,14 +81,31 @@ enforced in the API, and disabled UI is always re-checked server-side.
 
 Tracked, not hidden:
 
-- **Login is not rate limited.** Eleven endpoints are — admin step-up (8 per
-  15 min, the only reason a six-digit TOTP is not brute-forceable), password
-  change, password reset, uploads, identity attempts, reports — and the counters
-  are shared across instances via Redis, so they hold under replicas rather than
-  silently multiplying by the replica count.
+- **No per-IP limit on login.** Login is capped per address — 10 attempts per
+  15 minutes, cleared on success — alongside eleven other limited endpoints,
+  including admin step-up at 8 per 15 min, which is the only reason a six-digit
+  TOTP is not brute-forceable. The counters are shared across instances via
+  Redis, so they hold under replicas rather than silently multiplying by the
+  replica count.
   → [ADR 0018](docs/adr/0018-redis-for-shared-ephemeral-state.md)
 
-  Login itself still has none, and should.
+  What is missing is a per-IP limit, and it is missing on purpose. Set low
+  enough to matter it punishes shared addresses — an office, a university, a
+  carrier NAT — where hundreds of unrelated people sign in from one IP. Set high
+  enough not to, it stops nothing, because credential stuffing tries one leaked
+  password against thousands of accounts from rotating proxies and the
+  per-address counter never sees more than one attempt from any of them.
+
+  The version worth having counts only *failed* attempts, so legitimate traffic
+  behind a NAT never accumulates. That needs the limiter to report a count
+  without incrementing it, which the current one deliberately cannot do — it
+  counts on the way in, because that is what makes it atomic.
+
+- **A known denial-of-service on the login limit.** Because the counter is keyed
+  on the submitted address, somebody who knows a victim's email can spend that
+  victim's allowance and keep them out for up to fifteen minutes. Accepted
+  knowingly: a recoverable nuisance against an otherwise unbounded attack on
+  every account. It is also why the limit is ten rather than three.
 - **The BFF's single-flight refresh is per-process.** Behind more than one
   frontend instance, concurrent refreshes would trip reuse detection and revoke
   live sessions. This is the outstanding half of ADR 0018: the counters moved to
@@ -99,8 +116,10 @@ Tracked, not hidden:
   adding before deployment.
 - **No security headers.** No CSP, HSTS, or `X-Content-Type-Options`. `helmet`
   and a CSP belong here before this is public.
-- **No account lockout or login throttling.** Password guessing is currently
-  unbounded.
+- **No account lockout.** Deliberate, not missing. Login is throttled (above),
+  which caps guessing without handing anyone a way to disable another person's
+  account permanently — a lockout that an attacker can trigger is a denial of
+  service dressed as a control.
 - **Email enumeration is partially possible.** Resend-verification is
   deliberately silent, but signup distinguishes an already-verified address.
 - **Uploads are served from a public path** with unguessable keys. Adequate for

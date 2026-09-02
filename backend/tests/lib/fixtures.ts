@@ -306,6 +306,24 @@ export class Scope {
     const emails = [...this.emails];
     if (emails.length) {
       await prisma.user.deleteMany({ where: { email: { in: emails } } });
+
+      /**
+       * The login counter outlives the account, so it has to be cleared here.
+       *
+       * `login:{email}` is keyed on the ADDRESS, not the user id — deliberately,
+       * because deleting an account must not hand an attacker a fresh
+       * allowance. The consequence for tests is that a suite which exhausts the
+       * limit for one of its addresses poisons that address for fifteen
+       * minutes, and every scope email is deterministic (`kt.<tag>.<name>@…`),
+       * so the NEXT run of that suite cannot log in and fails during setup with
+       * a 429 that looks nothing like the thing it was testing.
+       *
+       * That is exactly how tests/api/ratelimit.ts broke itself: its login
+       * section spent the limit for `subject`, and the following run could not
+       * create the account it needed.
+       */
+      const { clearRateLimit } = await import("../../src/lib/rateLimit");
+      await clearRateLimit(...emails.map((e) => `login:${e}`));
     }
 
     // updateMany, not update: a listing this scope CREATED (ownListing) is

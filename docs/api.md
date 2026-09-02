@@ -110,12 +110,27 @@ Always `200` — it does not reveal whether the address is registered.
 
 `200` → `{ "user": { ... } }`, sets both cookies.
 
-| Failure | Code |
-| --- | --- |
-| Wrong email or password | `INVALID_CREDENTIALS` |
-| Email not verified | `EMAIL_NOT_VERIFIED` |
+| Status | Failure | Code |
+| --- | --- | --- |
+| 401 | Wrong email or password | `INVALID_CREDENTIALS` |
+| 403 | Account suspended | `ACCOUNT_SUSPENDED` |
+| 403 | Email not verified | `EMAIL_NOT_VERIFIED` |
+| 429 | Too many attempts for this address | `RATE_LIMITED` |
 
 Login is hard-blocked until verified — no partial session.
+
+**Rate limited to 10 attempts per 15 minutes per address**, and the counter is
+cleared the moment a correct password is given, so ordinary mistyping never
+accumulates. The 429 carries `retryAfterSeconds`.
+
+The counter is keyed on the submitted address rather than on a user row, so an
+address with no account throttles identically — a 429 says nothing about whether
+the account exists. Same reason the 401 uses one message for a wrong address and
+a wrong password.
+
+There is deliberately **no per-IP limit** on this endpoint, unlike
+`/auth/password/forgot`. See [SECURITY.md](../SECURITY.md#known-gaps) for why,
+and for the denial-of-service the per-address limit knowingly accepts.
 
 ### `POST /auth/refresh`
 

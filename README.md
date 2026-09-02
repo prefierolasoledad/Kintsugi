@@ -11,7 +11,7 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
-> verification, email, and an admin dashboard all work — covered by **789
+> verification, email, and an admin dashboard all work — covered by **796
 > assertions across 22 suites** (`npm test`), run against the real stack rather
 > than mocks. Payments and identity run against Stripe's test mode: no real
 > money moves, no real document is checked. Payouts to sellers are the one
@@ -93,7 +93,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**789 assertions across 22 suites**, and they drive the actual stack — a real
+**796 assertions across 22 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.

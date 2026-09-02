@@ -211,6 +211,113 @@ void main(
       (await buyer.get("/api/auth/me")).status === 200,
       "the account is throttled, not locked — the session still works"
     );
+
+    /* ============================================================ *
+     * 6. Login.
+     *
+     * The one that was missing. Every other credential control raises the
+     * COST of guessing a password; only this caps the number of attempts.
+     * ============================================================ */
+    t.section("6 - login caps password guessing");
+
+    const { web } = await import("../lib/api");
+
+    /**
+     * Its own account, not the one section 5 uses.
+     *
+     * This section deliberately exhausts the login limit for whatever address
+     * it targets, and the limit is keyed on the address rather than the user
+     * id. Pointing it at a shared fixture account entangles two sections that
+     * have nothing to do with each other — and if either fails partway, the
+     * other's diagnosis is a 429 about the wrong thing.
+     */
+    await scope.buyer("guessee");
+    const victim = scope.emailFor("guessee");
+
+    const attempts: number[] = [];
+    for (let i = 0; i < 13; i++) {
+      const res = await web().post("/api/auth/login", {
+        email: victim,
+        password: `wrong-guess-${i}`,
+      });
+      attempts.push(res.status);
+    }
+
+    const guessed = attempts.filter((s) => s === 401).length;
+    const blocked = attempts.filter((s) => s === 429).length;
+
+    t.check(guessed === 10, "ten guesses reached the password check", guessed);
+    t.check(blocked === 3, "and the rest never got that far", blocked);
+    t.check(
+      attempts[9] === 401 && attempts[10] === 429,
+      "cutting off exactly at the limit",
+      `#10=${attempts[9]} #11=${attempts[10]}`
+    );
+
+    /**
+     * THE REFUSAL MUST NOT LEAK WHETHER THE ACCOUNT EXISTS.
+     *
+     * The counter is keyed on the submitted address rather than on a user row,
+     * so an address with no account throttles identically. If it did not, a 429
+     * would confirm the address is real — turning a defence into an enumeration
+     * oracle, which is the exact mistake /password/forgot avoids by answering
+     * the same way to everything.
+     */
+    const ghost = `kt.cache.nobody.${Date.now()}@kintsugi.test`;
+    const ghostStatuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const res = await web().post("/api/auth/login", { email: ghost, password: "whatever-1234" });
+      ghostStatuses.push(res.status);
+    }
+    t.check(
+      ghostStatuses.filter((s) => s === 401).length === 10 &&
+        ghostStatuses.filter((s) => s === 429).length === 2,
+      "an address with no account is throttled exactly the same way",
+      `401s=${ghostStatuses.filter((s) => s === 401).length} 429s=${ghostStatuses.filter((s) => s === 429).length}`
+    );
+
+    /**
+     * AND THE COUNTER CLEARS ON SUCCESS.
+     *
+     * Without this, someone who mistypes twice and then signs in carries those
+     * attempts for the rest of the window — so their next mistake refuses them
+     * early, for a reason they cannot see. It is what makes "throttled, not
+     * locked" true rather than merely claimed.
+     */
+    const mistyper = await scope.buyer("mistyper");
+    const mistypedEmail = scope.emailFor("mistyper");
+
+    for (let i = 0; i < 4; i++) {
+      await web().post("/api/auth/login", { email: mistypedEmail, password: `oops-${i}` });
+    }
+
+    const gotIn = await web().post("/api/auth/login", {
+      email: mistypedEmail,
+      password: PASSWORD,
+    });
+    t.check(gotIn.status === 200, "the right password still works after four misses", gotIn.status);
+
+    // Nine more wrong guesses. If the earlier four still counted, this would
+    // start refusing partway through.
+    const afterSuccess: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      const res = await web().post("/api/auth/login", {
+        email: mistypedEmail,
+        password: `again-${i}`,
+      });
+      afterSuccess.push(res.status);
+    }
+    t.check(
+      afterSuccess.every((s) => s === 401),
+      "and the successful login reset the count — none of the next nine were refused",
+      `429s=${afterSuccess.filter((s) => s === 429).length}`
+    );
+
+    // The session issued before the throttling still works.
+    t.check(
+      (await mistyper.get("/api/auth/me")).status === 200,
+      "an existing session is unaffected by the throttle"
+    );
   },
   async (t) => {
     const { disconnectRateLimitStore } = await import("../../src/lib/rateLimit");

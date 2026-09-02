@@ -16,7 +16,7 @@ import {
 import { isPasswordBreached } from "../lib/passwordBreach";
 import { issueRefreshToken, revokeRefreshToken, rotateRefreshToken } from "../lib/refreshTokens";
 import { requireAuth } from "../middleware/requireAuth";
-import { checkRateLimit } from "../lib/rateLimit";
+import { checkRateLimit, clearRateLimit } from "../lib/rateLimit";
 import {
   PasswordError,
   changePassword,
@@ -123,13 +123,110 @@ authRouter.post("/login", async (req, res) => {
   }
   const { email, password } = parsed.data;
 
+  /**
+   * RATE LIMITED PER ADDRESS.
+   *
+   * Without it, password guessing against one account is unbounded. Every other
+   * credential control here — bcrypt at cost 12, breached-password rejection,
+   * refresh rotation — raises the *cost* of an attack. Only a limit caps the
+   * number of attempts, and SECURITY.md named this as the gap.
+   *
+   * Ten per fifteen minutes: high enough that ordinary mistyping never reaches
+   * it, low enough that sustained guessing is pointless.
+   *
+   * CLEARED ON SUCCESS, so somebody who mistypes twice and then gets it right
+   * does not carry those attempts for the rest of the window.
+   *
+   * THE TRADE-OFF, STATED
+   * Keying on the submitted address means somebody who knows a victim's email
+   * can spend the victim's allowance and keep them out for up to fifteen
+   * minutes. That is real. It is also a recoverable nuisance, traded against an
+   * otherwise unbounded attack on every account on the platform.
+   *
+   * NO PER-IP LIMIT HERE, unlike /password/forgot — see the note below.
+   *
+   * Fails OPEN when Redis is unreachable, unlike `admin-stepup`. Nobody being
+   * able to sign in is worse than an unthrottled login for the length of an
+   * outage, and the one surface that genuinely cannot tolerate that has its own
+   * limit which fails closed.
+   */
+  const perAddress = await checkRateLimit(`login:${email}`, 10, 15 * 60 * 1000);
+
+  if (!perAddress.allowed) {
+    /**
+     * Identical whether or not the address exists.
+     *
+     * The counter is keyed on what was submitted rather than on a user row, so
+     * an address with no account is throttled exactly like one with an account
+     * — a 429 therefore says nothing about which. Same reasoning as the 401
+     * below sharing one message for a wrong address and a wrong password.
+     */
+    res.status(429).json({
+      error: "Too many sign-in attempts. Wait a few minutes and try again.",
+      code: "RATE_LIMITED",
+      retryAfterSeconds: perAddress.retryAfterSeconds,
+    });
+    return;
+  }
+
   const user = await prisma.user.findUnique({ where: { email } });
   const valid = user ? await verifyPassword(password, user.passwordHash) : false;
 
   if (!user || !valid) {
-    res.status(401).json({ error: "Incorrect email or password" });
+    /**
+     * One message for both a wrong address and a wrong password, and a `code`
+     * that says nothing more than the message does.
+     *
+     * Distinguishing them turns login into an account-enumeration oracle: feed
+     * it a list of addresses and learn which have accounts here, which is worth
+     * having before a credential-stuffing run. The 429 above is deliberately
+     * shaped the same way.
+     *
+     * The code was documented in docs/api.md before it was actually sent —
+     * every other failure path here carries one, and api.md's own convention is
+     * that `code` is stable while `error` text is not.
+     */
+    res.status(401).json({
+      error: "Incorrect email or password",
+      code: "INVALID_CREDENTIALS",
+    });
     return;
   }
+
+  /**
+   * Cleared here — as soon as the password is proven — not after the checks
+   * below.
+   *
+   * The limit exists to cap password guessing, and that question is now
+   * settled. A suspended or unverified account is a different refusal made by
+   * somebody who demonstrably knows their own password, and holding their spent
+   * attempts against them would throttle the person who fixes the problem and
+   * comes back.
+   */
+  await clearRateLimit(`login:${email}`);
+
+  /**
+   * WHY THERE IS NO PER-IP LIMIT ON LOGIN
+   *
+   * /password/forgot has one, and the asymmetry is deliberate. That endpoint
+   * sends mail, so volume from a single caller is inherently suspicious and
+   * naturally low. Login is neither.
+   *
+   * A per-IP login limit fails in both directions at once. Set low enough to
+   * matter, it punishes shared addresses — an office, a university, a mobile
+   * carrier's NAT — where hundreds of unrelated people sign in from one IP, and
+   * the failure looks to them like the site being broken. Set high enough not
+   * to, it stops nothing: credential stuffing does not guess one password many
+   * times from one address, it tries one leaked password against thousands of
+   * accounts from rotating proxies, and the per-address counter above never
+   * sees more than a single attempt from any of them.
+   *
+   * The version worth having counts only FAILED attempts, so legitimate
+   * traffic behind a NAT never accumulates. That needs the limiter to answer
+   * "how many so far?" without incrementing, which `checkRateLimit` cannot do
+   * — it counts on the way in, by design, because that is what makes it atomic.
+   * Recorded here as the shape of the fix rather than approximated badly.
+   */
 
   /**
    * Suspension is checked after the password, deliberately.

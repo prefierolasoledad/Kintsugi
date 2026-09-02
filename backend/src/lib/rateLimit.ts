@@ -178,6 +178,38 @@ export async function checkRateLimit(
   }
 }
 
+/**
+ * Forgets a key's counter, as though the window had never started.
+ *
+ * WHAT THIS IS FOR
+ * Turning "throttled, not locked" from a claim into a fact. Login counts failed
+ * attempts, so somebody who mistypes their password four times and then gets it
+ * right should not carry four attempts around for the rest of the window —
+ * their next mistake would refuse them at five rather than ten.
+ *
+ * Only ever called after the thing being guarded has SUCCEEDED. Clearing on
+ * failure would make the limit decorative.
+ *
+ * Never throws. A counter that fails to clear is a user with a smaller
+ * allowance than intended for a few minutes; a request that fails because a
+ * counter would not clear is a user who cannot log in at all.
+ */
+export async function clearRateLimit(...keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+
+  if (!isRedisConfigured()) {
+    for (const key of keys) buckets.delete(key);
+    return;
+  }
+
+  try {
+    const c = await getRedis();
+    await c.del(keys.map((k) => `ratelimit:${k}`));
+  } catch (err) {
+    console.error(`[rate-limit] could not clear ${keys.join(", ")}: ${(err as Error).message}`);
+  }
+}
+
 /** Test-only: drops the in-memory buckets so a suite can start clean. */
 export function __resetInMemoryLimits() {
   buckets.clear();
