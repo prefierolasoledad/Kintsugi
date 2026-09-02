@@ -47,9 +47,18 @@ export function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+/**
+ * Sets the session cookies.
+ *
+ * `refreshToken` is OPTIONAL, for one caller: a refresh that lost a concurrent
+ * race. That request needs a working access token, and must NOT overwrite the
+ * refresh cookie — the winner of the race already set the current one, and
+ * writing a stale value over it would break the session this exists to save.
+ * See rotateRefreshToken's grace window.
+ */
 export function setAuthCookies(
   res: import("express").Response,
-  tokens: { accessToken: string; refreshToken: string }
+  tokens: { accessToken: string; refreshToken?: string }
 ) {
   const secure = process.env.NODE_ENV === "production";
   res.cookie(ACCESS_TOKEN_COOKIE, tokens.accessToken, {
@@ -59,13 +68,15 @@ export function setAuthCookies(
     maxAge: ACCESS_TOKEN_MAX_AGE_MS,
     path: "/",
   });
-  res.cookie(REFRESH_TOKEN_COOKIE, tokens.refreshToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure,
-    maxAge: REFRESH_TOKEN_MAX_AGE_MS,
-    path: "/",
-  });
+  if (tokens.refreshToken !== undefined) {
+    res.cookie(REFRESH_TOKEN_COOKIE, tokens.refreshToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      maxAge: REFRESH_TOKEN_MAX_AGE_MS,
+      path: "/",
+    });
+  }
 }
 
 export function clearAuthCookies(res: import("express").Response) {

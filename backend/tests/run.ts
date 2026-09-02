@@ -29,6 +29,7 @@ const SUITES: Suite[] = [
   { name: "notifications", file: "api/notifications.ts", kind: "api" },
   { name: "refunds", file: "api/refunds.ts", kind: "api" },
   { name: "passwords", file: "api/passwords.ts", kind: "api" },
+  { name: "refresh", file: "api/refresh.ts", kind: "api" },
   { name: "ratelimit", file: "api/ratelimit.ts", kind: "api" },
   { name: "cache", file: "api/cache.ts", kind: "api" },
   { name: "admin", file: "api/admin.ts", kind: "api" },

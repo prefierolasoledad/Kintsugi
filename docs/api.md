@@ -140,6 +140,17 @@ cookies.
 Presenting an already-rotated token revokes the entire token family: reuse
 means the credential leaked. → [ADR 0001](adr/0001-access-and-refresh-tokens.md)
 
+**With one exception, for the ten seconds after rotation.** Access tokens expire
+in batches, so several requests routinely retry with the same refresh cookie —
+the only one the browser has. A token superseded that recently gets a new access
+token and **no new refresh cookie**, leaving the one the winning request already
+set. Rotation itself is an atomic claim, so exactly one of N concurrent requests
+rotates however many arrive together.
+
+Tokens revoked by logout or a password change are never graced, and outside the
+window a replay still revokes everything.
+→ [ADR 0021](adr/0021-refresh-race-grace-window.md)
+
 ### `POST /auth/password/change` 🔒
 
 ```json

@@ -200,7 +200,7 @@ code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-796 assertions across 22 suites.
+823 assertions across 23 suites.
 
 | Suite | Covers |
 |---|---|
@@ -211,6 +211,7 @@ code that is provably correct, which is a miserable hour to debug.
 | `notifications` | every event reaches the right person; unread count; read-all |
 | `refunds` | automatic and moderator-issued; over-refund guard; async webhook, forged and replayed |
 | `passwords` | change and reset; no enumeration; sessions revoked; TOTP survives |
+| `refresh` | rotation, the concurrency race, and the four ways a replay is still theft |
 | `ratelimit` | shared counters, atomic increment, both failure policies, login throttling |
 | `cache` | hit/miss, TTL, stale-while-revalidate, negative caching, invalidation over HTTP |
 | `identity` | Stripe Identity, signed webhooks, the payout gate |

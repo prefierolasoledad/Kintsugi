@@ -11,8 +11,8 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
-> verification, email, and an admin dashboard all work — covered by **796
-> assertions across 22 suites** (`npm test`), run against the real stack rather
+> verification, email, and an admin dashboard all work — covered by **823
+> assertions across 23 suites** (`npm test`), run against the real stack rather
 > than mocks. Payments and identity run against Stripe's test mode: no real
 > money moves, no real document is checked. Payouts to sellers are the one
 > significant feature not built. See [What's built](#whats-built).
@@ -93,7 +93,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**796 assertions across 22 suites**, and they drive the actual stack — a real
+**823 assertions across 23 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -182,7 +182,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 20 ADRs on why things are built the way they are |
+| [Decision records](docs/adr/README.md) | 21 ADRs on why things are built the way they are |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 

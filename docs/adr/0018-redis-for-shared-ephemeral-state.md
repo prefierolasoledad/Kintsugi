@@ -107,6 +107,15 @@ a different blast radius, and moving it means the Next server talks to Redis
 too. Recorded here so the next person knows it is unfinished rather than
 overlooked.
 
+> **Resolved, and not this way** — see
+> [ADR 0021](0021-refresh-race-grace-window.md). The lock proposed above would
+> have had to publish the newly minted refresh token through Redis for the
+> waiters to use, putting a live session credential in the store this codebase
+> treats as safe to lose. The race is instead handled in Postgres, where the
+> token state already lives, so the Next server still talks to no datastore —
+> and clients that are not our BFF, which no memo could ever have helped, are
+> fixed too.
+
 ## Alternatives considered
 
 **A counters table in Postgres.** It is already there and already the arbiter

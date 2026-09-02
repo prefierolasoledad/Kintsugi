@@ -314,7 +314,16 @@ authRouter.post("/refresh", async (req, res) => {
   }
 
   const accessToken = signAccessToken({ userId: result.userId });
-  setAuthCookies(res, { accessToken, refreshToken: result.token });
+
+  /**
+   * `token` is null when this request lost a concurrent refresh race.
+   *
+   * Passing it straight through matters: setAuthCookies then writes only the
+   * access cookie, leaving the refresh cookie the winning request already set.
+   * Overwriting it with anything else — including a fresh rotation — would
+   * fork the chain and break the session on the next refresh.
+   */
+  setAuthCookies(res, { accessToken, refreshToken: result.token ?? undefined });
   res.status(204).end();
 });
 

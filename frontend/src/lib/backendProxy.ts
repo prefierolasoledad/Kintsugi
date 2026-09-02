@@ -93,21 +93,35 @@ type RefreshOutcome = { ok: boolean; setCookies: string[] };
 type RefreshEntry = { promise: Promise<RefreshOutcome>; created: number };
 
 /**
- * Single-flight refresh.
+ * Single-flight refresh — an OPTIMISATION, no longer a correctness control.
  *
  * Refresh tokens rotate on every use, and presenting an already-rotated token
- * is treated as theft — it revokes the whole family. That is correct against a
- * real attacker, but N concurrent requests hitting a freshly expired access
- * token would each call /auth/refresh with the same token, so the second one
- * looks exactly like a replay and kills the session.
+ * is treated as theft — it revokes the whole family. N concurrent requests
+ * hitting a freshly expired access token each call /auth/refresh with the same
+ * cookie, because it is the only one the browser has, so all but the first look
+ * like a replay.
  *
- * Keyed by the refresh token itself, so the first caller performs the refresh
- * and everyone else awaits the same promise and reuses its cookies. One refresh
- * per token, however many requests expire together.
+ * Keyed by the refresh token itself: the first caller performs the refresh and
+ * everyone else awaits the same promise and reuses its cookies. One backend
+ * round trip per token, however many requests expire together.
  *
- * NOTE: this map is per-process. Behind more than one server instance the race
- * returns, and the backend would need a reuse grace window instead.
- * See docs/adr/0001-access-and-refresh-tokens.md
+ * THIS MAP IS PER-PROCESS, AND THAT IS NOW FINE.
+ * It used to be the only thing preventing the race, which meant a second
+ * frontend instance reintroduced it — two memos, two refreshes, one of them
+ * read as theft, the user signed out everywhere.
+ *
+ * The race is now handled where the token state actually lives: the backend
+ * treats a token superseded within the last ten seconds as a race rather than a
+ * replay and issues an access token without rotating again. So a memo miss
+ * across instances costs an extra HTTP round trip and nothing else.
+ *
+ * Keeping it anyway, because avoiding N-1 unnecessary refreshes is worth a Map.
+ * NOT moved to Redis: doing that would mean publishing the newly minted refresh
+ * token through Redis so the losers could use it — a live session credential in
+ * the one store this codebase treats as safe to lose (ADR 0019). The grace
+ * window needs no credential to leave Postgres at all.
+ *
+ * See docs/adr/0021-refresh-race-grace-window.md
  */
 const refreshes = new Map<string, RefreshEntry>();
 

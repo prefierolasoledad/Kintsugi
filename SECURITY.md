@@ -106,11 +106,17 @@ Tracked, not hidden:
   victim's allowance and keep them out for up to fifteen minutes. Accepted
   knowingly: a recoverable nuisance against an otherwise unbounded attack on
   every account. It is also why the limit is ten rather than three.
-- **The BFF's single-flight refresh is per-process.** Behind more than one
-  frontend instance, concurrent refreshes would trip reuse detection and revoke
-  live sessions. This is the outstanding half of ADR 0018: the counters moved to
-  Redis, the refresh lock has not.
-  → [ADR 0001](docs/adr/0001-access-and-refresh-tokens.md)
+- **Reuse detection has a ten-second grace window.** A refresh token
+  superseded within ten seconds is treated as a concurrent request rather than
+  a replay, because access tokens expire in batches and a page with several
+  requests in flight would otherwise revoke its own session on every refresh.
+  Outside the window, and for tokens revoked by logout or a password change, a
+  replay still revokes every session the user has.
+
+  This is not a widening of anyone's reach: the path is only reachable by
+  presenting a token that was valid ten seconds ago, and whoever holds that
+  token could have used it normally in the same window.
+  → [ADR 0021](docs/adr/0021-refresh-race-grace-window.md)
 - **No CSRF tokens.** `sameSite=lax` cookies plus a same-origin BFF cover the
   common cases, but state-changing requests have no additional token. Worth
   adding before deployment.

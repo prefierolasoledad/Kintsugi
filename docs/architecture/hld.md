@@ -265,12 +265,14 @@ replaces those three.
   storage seam exists. It also means seller photos do not render under Compose:
   the browser loads them from `localhost:4000`, unreachable from inside the web
   container.
-- **The BFF's single-flight refresh memo is process-local.** Refresh tokens
-  rotate on use and presenting a rotated one is treated as theft. Behind a load
-  balancer, two concurrent requests can land on different frontend instances,
-  both refresh, and the second looks like a replay — signing the user out
-  everywhere. Recorded as unfinished in
-  [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md).
+- **Uploads are the only thing blocking a second frontend or API replica.**
+  Everything else that was per-process is now shared or made unnecessary: rate
+  limits and the cache live in Redis
+  ([ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md),
+  [ADR 0019](../adr/0019-cache-tiering-rule.md)), and the refresh race is
+  handled in Postgres rather than by a per-process memo
+  ([ADR 0021](../adr/0021-refresh-race-grace-window.md)). Local-disk uploads
+  are what remain.
 - **Search is substring matching** (`ILIKE '%q%'`), which cannot use a B-tree
   index, so every search is a sequential scan. Fine at this size; a Postgres
   `tsvector` index with ranking is the upgrade path.
