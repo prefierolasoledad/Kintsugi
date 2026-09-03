@@ -38,6 +38,7 @@ the old one, rather than an edit.
 | [0019](0019-cache-tiering-rule.md) | A tiering rule for what may be cached; amends 0018, which rejected caching | Accepted |
 | [0020](0020-replication-and-backups.md) | A streaming standby for availability; point-in-time recovery still outstanding | Accepted |
 | [0021](0021-refresh-race-grace-window.md) | Concurrent refresh handled by a grace window in Postgres, not a Redis lock | Accepted |
+| [0022](0022-object-storage-for-uploads.md) | Object storage for uploads; the last thing blocking a second replica | Accepted |
 
 ## Adding one
 

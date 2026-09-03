@@ -12,7 +12,7 @@ flowchart LR
     P[("PostgreSQL<br/><i>source of truth</i>")]
     R[("Redis<br/><i>safe to lose</i>")]
     S[("Standby<br/><i>opt-in, read-only</i>")]
-    F[["Uploaded images<br/>(disk / object storage)"]]
+    F[["Object storage<br/><i>photos, read by the browser</i>"]]
 
     B -->|HTTPS, session cookies| N
     N -->|"server-to-server<br/>cookies relayed"| E

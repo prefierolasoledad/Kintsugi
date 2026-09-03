@@ -2,7 +2,7 @@ import "dotenv/config";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import { UPLOAD_DIR } from "./lib/storage";
+import { UPLOAD_DIR, assertStorage, storageDriver } from "./lib/storage";
 import { authRouter } from "./routes/auth";
 import { catalogRouter } from "./routes/catalog";
 import { sellerRouter } from "./routes/seller";
@@ -45,20 +45,29 @@ app.use(express.json());
 app.use(cookieParser());
 
 /**
- * Uploaded images. Keys are random and never reused, so a long immutable cache
- * is safe. `dotfiles: deny` and `index: false` keep this from serving anything
- * other than the files we wrote.
+ * Uploaded images, when they are on this container's disk.
+ *
+ * Keys are random and never reused, so a long immutable cache is safe.
+ * `dotfiles: deny` and `index: false` keep this from serving anything other
+ * than the files we wrote.
+ *
+ * MOUNTED ONLY FOR THE DISK DRIVER. Under object storage the browser fetches
+ * objects from the store directly and this route would serve an empty
+ * directory — answering 404 for images that exist, which is a worse failure
+ * than not having the route at all, because it looks like the upload broke.
  */
-app.use(
-  "/uploads",
-  express.static(UPLOAD_DIR, {
-    maxAge: "1y",
-    immutable: true,
-    index: false,
-    dotfiles: "deny",
-    fallthrough: false,
-  })
-);
+if (storageDriver() === "disk") {
+  app.use(
+    "/uploads",
+    express.static(UPLOAD_DIR, {
+      maxAge: "1y",
+      immutable: true,
+      index: false,
+      dotfiles: "deny",
+      fallthrough: false,
+    })
+  );
+}
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "kintsugi-backend" });
@@ -118,6 +127,20 @@ app.listen(PORT, () => {
     .catch((err) => {
       console.error(`Limits:   REDIS UNREACHABLE — ${(err as Error).message}`);
       console.error("          Limits fall back to per-process counters.");
+    });
+
+  /**
+   * Also not fatal, and also printed loudly.
+   *
+   * A misconfigured bucket has no symptom until a seller uploads a photo and
+   * gets an error, or worse, uploads one that silently 404s in the page. One
+   * line at boot beats discovering it from a support message.
+   */
+  assertStorage()
+    .then((summary) => console.log(`Uploads:  ${summary}`))
+    .catch((err) => {
+      console.error(`Uploads:  OBJECT STORE UNREACHABLE — ${(err as Error).message}`);
+      console.error("          Photo uploads will fail until this is fixed.");
     });
 
   // Expired holds must be returned to stock by something other than a new

@@ -21,21 +21,44 @@ mc alias set local http://minio:9000 "$S3_ACCESS_KEY" "$S3_SECRET_KEY" > /dev/nu
 mc mb --ignore-existing "local/${BUCKET}"
 
 # ------------------------------------------------------------------
-# Anonymous READ, and nothing else.
+# Anonymous GetObject, and NOTHING else.
 #
-# `download` grants GetObject to unauthenticated callers and no more — no
-# listing the bucket, no writing, no deleting. Writes still require the
-# credentials the API holds.
+# NOT `mc anonymous set download`, which is the obvious one-liner and is wrong.
+# It also grants `s3:ListBucket` to `*`:
 #
-# This is correct for what is in here: listing photos and avatars on a public
-# marketplace, already visible to anyone who can load a product page. Keys are
-# 128 bits of randomness so the bucket cannot be walked by guessing, and
-# serving them unsigned is what allows a CDN to cache them at all.
+#   {"Action":["s3:GetBucketLocation","s3:ListBucket"],
+#    "Principal":{"AWS":["*"]},"Resource":["arn:aws:s3:::kintsugi-uploads"]}
 #
-# The alternative — presigned URLs — would put an expiring signature in every
-# <img> tag, which defeats caching and makes a stored URL something that stops
-# working. Anything genuinely private does not belong in this bucket.
+# That makes the bucket enumerable by anyone — every listing photo and every
+# avatar any user has ever uploaded, walkable from a browser. The whole reason
+# unsigned public reads are defensible here is that keys are 128 bits of
+# randomness and therefore unguessable; an index hands that away for free.
+#
+# Caught by tests/api/storage.ts, which asserts a bucket listing is refused.
+#
+# Public read on the OBJECTS is still correct for what is in here: listing
+# photos and avatars on a public marketplace, already visible to anyone who can
+# load a product page. Serving them unsigned is also what lets a CDN cache them
+# — presigned URLs would put an expiring signature in every <img> tag, defeating
+# caching and making a stored URL something that stops working.
+#
+# Writes and deletes still require the credentials the API holds. Anything
+# genuinely private does not belong in this bucket.
 # ------------------------------------------------------------------
-mc anonymous set download "local/${BUCKET}"
+cat > /tmp/public-read.json <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "AWS": ["*"] },
+      "Action": ["s3:GetObject"],
+      "Resource": ["arn:aws:s3:::${BUCKET}/*"]
+    }
+  ]
+}
+JSON
 
-echo "minio-init: bucket '${BUCKET}' ready, anonymous read enabled"
+mc anonymous set-json /tmp/public-read.json "local/${BUCKET}"
+
+echo "minio-init: bucket '${BUCKET}' ready — anonymous GetObject only, not listable"

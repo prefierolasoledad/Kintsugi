@@ -48,7 +48,7 @@ from a fork gets a meaningful green run without any credentials. See
 | **Database** | PostgreSQL 16 | System of record |
 | **Cache & counters** | Redis 7 | Rate-limit counters and read-through cache. Holds nothing that must survive a restart — see [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md) |
 | **Standby** *(opt-in)* | PostgreSQL 16 | A byte-for-byte streaming clone, ~11ms behind. Read-only, and nothing queries it — it exists to be promoted. `--profile ha`. See [ADR 0020](../adr/0020-replication-and-backups.md) |
-| **Image store** | Disk (dev) | Processed seller photos, served over HTTP |
+| **Object storage** | MinIO (S3-compatible) | Processed photos and avatars, fetched by the browser directly. Anonymous read on objects only — see [ADR 0022](../adr/0022-object-storage-for-uploads.md) |
 
 Two Node processes, deliberately. The Next.js server holds no business logic —
 it renders and forwards. Every rule is enforced in Express, so a client that
@@ -265,14 +265,15 @@ replaces those three.
   storage seam exists. It also means seller photos do not render under Compose:
   the browser loads them from `localhost:4000`, unreachable from inside the web
   container.
-- **Uploads are the only thing blocking a second frontend or API replica.**
-  Everything else that was per-process is now shared or made unnecessary: rate
-  limits and the cache live in Redis
+- **Failover is manual, and nothing is automatically replaced.** Both tiers can
+  now run more than one replica — rate limits and the cache are in Redis
   ([ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md),
-  [ADR 0019](../adr/0019-cache-tiering-rule.md)), and the refresh race is
-  handled in Postgres rather than by a per-process memo
-  ([ADR 0021](../adr/0021-refresh-race-grace-window.md)). Local-disk uploads
-  are what remain.
+  [ADR 0019](../adr/0019-cache-tiering-rule.md)), the refresh race is settled in
+  Postgres ([ADR 0021](../adr/0021-refresh-race-grace-window.md)), and uploads
+  are in shared object storage
+  ([ADR 0022](../adr/0022-object-storage-for-uploads.md)). What is missing is
+  anything that *notices* a dead instance and replaces it, which is an
+  orchestrator's job rather than the application's.
 - **Search is substring matching** (`ILIKE '%q%'`), which cannot use a B-tree
   index, so every search is a sequential scan. Fine at this size; a Postgres
   `tsvector` index with ranking is the upgrade path.

@@ -51,7 +51,7 @@ flowchart TB
 | `emailVerification.ts` | Issue and consume magic-link tokens | Token hashed; single-use via `usedAt` |
 | `mailer.ts` | Send transactional mail | Three transports: console, Ethereal, real SMTP |
 | `passwordBreach.ts` | Pwned Passwords k-anonymity check | Fails open |
-| `storage.ts` | Put/remove files, derive public URLs | **Storage seam**; keys validated against a strict pattern |
+| `storage.ts` | Put/remove objects, derive public URLs | Two drivers — local disk or S3-compatible — behind one interface. Keys validated against a strict pattern, and shared by both so a driver change cannot orphan stored URLs |
 | `imageProcessing.ts` | Validate and re-encode uploads | Magic bytes, EXIF stripping, bounds |
 | `kycProvider.ts` | Start session, apply decision | Stripe Identity, or a stub behind the same seam |
 | `paymentProvider.ts` | Intents, refunds, webhook verification | Stripe, or a stub behind the same seam |

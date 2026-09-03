@@ -109,20 +109,42 @@ export async function main(
   await disconnect();
 
   /**
-   * NOTE, for whoever hits this next.
+   * NOT `process.exit()`, and the reason is a Windows crash that reports as a
+   * failing suite.
    *
-   * On Windows, suites that skip early (a stub provider makes their case
-   * unreachable) abort here with a libuv assertion —
-   * `!(handle->flags & UV_HANDLE_CLOSING)` in win/async.c — after every
-   * assertion has already passed. The runner then counts the non-zero exit as a
-   * failing suite, showing "FAIL … 2 passed" with nothing actually failed.
+   * `process.exit()` here aborts in libuv —
+   * `!(handle->flags & UV_HANDLE_CLOSING)` in win/async.c — *after* every
+   * assertion has passed. The runner sees the non-zero exit and prints
+   * "FAIL … 20 passed" with nothing actually failed, which is the worst kind of
+   * red: it teaches you to ignore red.
    *
-   * Deferring this exit by a tick was tried and made no difference, so the abort
-   * is not this call racing a close. It looks like Prisma tearing down a pool
-   * that never finished opening, on a code path that reaches disconnect in
-   * milliseconds. Linux is unaffected, which is what CI runs.
+   * AN EARLIER NOTE HERE BLAMED PRISMA. That was wrong. It reproduces with no
+   * Prisma anywhere — three `fetch` calls and `process.exit(0)` is enough, and
+   * it does not matter whether the response bodies are consumed, whether the
+   * target is the API or MinIO, or whether undici's global dispatcher has been
+   * closed first. All four were tried. The only thing that fixes it is not
+   * calling `process.exit()`.
+   *
+   * It is also racy rather than deterministic, which is why most suites got
+   * away with it and the storage suite — whose last act is a fetch immediately
+   * before this line — did not.
+   *
+   * So: set the code and let the loop drain, with a short ceiling.
+   *
+   * MOST SUITES DO NOT DRAIN ON THEIR OWN. Something — a pooled Postgres
+   * socket, a keep-alive HTTP connection, a provider SDK's agent — outlives the
+   * work by design, so the ceiling is the normal path rather than an
+   * emergency. It was 8s first, which is fine for one suite and three minutes
+   * across twenty-four.
+   *
+   * 1500ms: everything is finished by then, and the only thing being waited on
+   * is sockets closing themselves. `unref`'d so a suite that genuinely does
+   * drain exits immediately rather than sitting out the full wait.
    */
-  process.exit(t.failed === 0 ? 0 : 1);
+  process.exitCode = t.failed === 0 ? 0 : 1;
+
+  const bail = setTimeout(() => process.exit(process.exitCode ?? 0), 1500);
+  bail.unref();
 }
 
 /** Ctrl+C must still clean up. Suites register their teardown here. */

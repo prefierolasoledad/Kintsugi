@@ -32,7 +32,8 @@ a Next.js storefront, an Express API, and PostgreSQL.
 | Payments | Stripe PaymentIntents + Refunds, behind a provider seam with a stub |
 | Identity | Stripe Identity, behind the same kind of seam |
 | Email | Nodemailer — console, Ethereal, or real SMTP |
-| Images | Sharp (re-encode + metadata stripping), local disk or object storage |
+| Images | Sharp (re-encode + metadata stripping) |
+| Uploads | S3-compatible object storage (MinIO locally), or local disk |
 | Delivery | Multi-stage Docker builds, Compose, GitHub Actions CI |
 
 ## Quick start
@@ -43,18 +44,18 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 ```bash
 git clone https://github.com/prefierolasoledad/Kintsugi.git && cd Kintsugi
-docker compose up --build            # postgres, redis, migrations, api, web
+docker compose up --build            # postgres, redis, minio, migrations, api, web
 docker compose run --rm seed         # 7 categories, 27 listings, reviews
 ```
 
-The storefront is on http://localhost:3000 and the API on http://localhost:4000.
-Migrations run as a one-shot job that the API waits for, rather than on API
-startup — the shortcut that breaks the moment there is more than one replica.
+The storefront is on http://localhost:3000, the API on http://localhost:4000, and
+MinIO's console on http://localhost:9001 (`kintsugi` / `kintsugi-dev-secret`).
 
-> **Known limitation:** seller-uploaded photos do not render in this mode. The
-> browser loads them from `localhost:4000`, which is reachable from the host but
-> not from inside the web container. Seeded photos come from Unsplash and are
-> unaffected. The fix is object storage behind the seam in `lib/storage.ts`.
+Two jobs run to completion before the API starts, rather than the API doing
+either at boot: `migrate` applies the migration history, and `minio-init`
+creates the uploads bucket. Both are shortcuts that break the moment there is
+more than one replica — several containers racing `migrate deploy`, or racing to
+set the same bucket policy.
 
 ### Running the servers locally
 
@@ -182,7 +183,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 21 ADRs on why things are built the way they are |
+| [Decision records](docs/adr/README.md) | 22 ADRs on why things are built the way they are |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
@@ -262,8 +263,7 @@ never learns the backend's address. See
 
 - **Payouts to sellers.** The largest remaining gap. Money reaches the platform
   and can be refunded from it; paying sellers out needs Stripe Connect.
-- **Object storage for uploads.** Local disk works and is wrong for more than
-  one replica. `lib/storage.ts` exists as the seam to replace.
+
 - **Backups, and Kubernetes.** A streaming standby exists
   (`docker compose --profile ha up -d postgres-replica`) and is verified, but a
   replica is not a backup — it copies a mistaken `DROP TABLE` as faithfully as

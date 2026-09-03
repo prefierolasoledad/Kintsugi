@@ -28,13 +28,29 @@ const nextConfig: NextConfig = {
         hostname: "images.unsplash.com",
         pathname: "/**",
       },
-      // Seller-uploaded photos, served by the backend in development. In
-      // production these come off a CDN/object store instead.
+      // Seller-uploaded photos on the local-disk driver, served by the API.
       {
         protocol: "http",
         hostname: "localhost",
         port: "4000",
         pathname: "/uploads/**",
+      },
+      /**
+       * The same photos on the object-storage driver.
+       *
+       * Both entries are needed, because both are reachable configurations:
+       * `npm run dev` defaults to local disk, Compose uses MinIO. Next refuses
+       * to optimise an image from a host that is not listed here, and the
+       * refusal renders as a broken image with the reason only in the server
+       * log — so an omission here looks exactly like a broken upload.
+       *
+       * In production this becomes the CDN hostname in front of the bucket.
+       */
+      {
+        protocol: "http",
+        hostname: "localhost",
+        port: "9000",
+        pathname: "/**",
       },
     ],
   },
