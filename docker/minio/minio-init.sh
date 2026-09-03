@@ -62,3 +62,21 @@ JSON
 mc anonymous set-json /tmp/public-read.json "local/${BUCKET}"
 
 echo "minio-init: bucket '${BUCKET}' ready — anonymous GetObject only, not listable"
+
+# ------------------------------------------------------------------
+# A SECOND bucket, for backups, with NO anonymous access whatsoever.
+#
+# Deliberately separate from the uploads bucket rather than a prefix inside it.
+# The uploads bucket grants anonymous GetObject to the world, and a base backup
+# is a byte-for-byte copy of the entire database — every password hash, every
+# order, every address. One policy mistake away from being the same bucket is
+# too close.
+#
+# No policy is set at all, so the default applies: nothing but the credentialed
+# client can read or write it.
+# ------------------------------------------------------------------
+BACKUP_BUCKET="${S3_BACKUP_BUCKET:-kintsugi-backups}"
+
+mc mb --ignore-existing "local/${BACKUP_BUCKET}"
+
+echo "minio-init: bucket '${BACKUP_BUCKET}' ready — private, no anonymous access"

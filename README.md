@@ -34,6 +34,7 @@ a Next.js storefront, an Express API, and PostgreSQL.
 | Email | Nodemailer — console, Ethereal, or real SMTP |
 | Images | Sharp (re-encode + metadata stripping) |
 | Uploads | S3-compatible object storage (MinIO locally), or local disk |
+| Backups | WAL archiving + base backups to object storage, PITR, a rehearsed restore |
 | Delivery | Multi-stage Docker builds, Compose, GitHub Actions CI |
 
 ## Quick start
@@ -169,9 +170,29 @@ streaming to, since both are healthy and both answer queries. Then commits five
 rows on the primary and times their arrival: **median 11.1ms**.
 
 It also states what replication is *not*. A standby copies `DROP TABLE orders`
-faithfully and in milliseconds; surviving a mistake needs point-in-time
-recovery, which is the outstanding half of
-[ADR 0020](docs/adr/0020-replication-and-backups.md).
+faithfully and in milliseconds — that is it working correctly. Surviving a
+mistake is a different mechanism:
+
+```bash
+docker compose --profile tools run --rm base-backup   # once
+npx tsx scripts/restore-drill.ts
+```
+
+Creates a table, fills it, notes the time, forces the WAL segment into object
+storage, **drops the table**, then recovers to the instant before and counts
+both databases:
+
+```
+                                            LIVE      RESTORED
+  restore_drill.canary rows                 gone           500
+  listings                                   927           927
+```
+
+The restore goes into a second container on port 5435, never over the live one —
+a rehearsal that causes an outage is a rehearsal nobody performs, and one nobody
+performs is worthless during an incident. Rehearsed three times consecutively,
+clean each time, because the bar is not that a restore worked once but that it
+is boring. See [ADR 0020](docs/adr/0020-replication-and-backups.md).
 
 ```bash
 # three API instances, sharing nothing
@@ -281,11 +302,11 @@ never learns the backend's address. See
 - **Payouts to sellers.** The largest remaining gap. Money reaches the platform
   and can be refunded from it; paying sellers out needs Stripe Connect.
 
-- **Backups, and Kubernetes.** A streaming standby exists
-  (`docker compose --profile ha up -d postgres-replica`) and is verified, but a
-  replica is not a backup — it copies a mistaken `DROP TABLE` as faithfully as
-  anything else. Next is WAL archiving for point-in-time recovery, and a restore
-  actually rehearsed rather than assumed.
+- **Kubernetes.** Compose is the deployment story today, and nothing promotes
+  the standby or replaces a dead instance — that is an orchestrator's job.
+  CloudNativePG expresses the replication and the backups from
+  [ADR 0020](docs/adr/0020-replication-and-backups.md) as a few lines of YAML,
+  including the scheduling and retention this deliberately does not do.
 
 Placeholder screens say so explicitly rather than presenting controls that
 don't work.

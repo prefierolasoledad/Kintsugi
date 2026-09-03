@@ -279,11 +279,12 @@ replaces those three.
   `tsvector` index with ranking is the upgrade path.
 - **Pagination is offset-based.** Simple and right for numbered result pages;
   deep offsets degrade.
-- **No backups.** A streaming standby exists and is verified — see
-  [ADR 0020](../adr/0020-replication-and-backups.md) — but replication is not
-  backup: it copies a mistaken `DROP TABLE` faithfully and in milliseconds.
-  WAL archiving for point-in-time recovery is outstanding, along with rehearsing
-  a restore, since a backup that has never been restored is not a backup.
+- **Backups are not scheduled or retained.** WAL archiving and point-in-time
+  recovery work and the restore is rehearsed
+  ([ADR 0020](../adr/0020-replication-and-backups.md)), but base backups are
+  taken on demand and nothing expires old ones. Compose has no scheduler, and
+  inventing one with a sleep loop would be a worse cron than cron — it is a
+  CronJob in Kubernetes, and CloudNativePG does retention and verification too.
 - **Failover is manual.** Nothing promotes the standby. Compose cannot express
   it; CloudNativePG can, which is part of why Kubernetes is next.
 - **Nothing reads from the replica**, deliberately. Routing reads to a standby

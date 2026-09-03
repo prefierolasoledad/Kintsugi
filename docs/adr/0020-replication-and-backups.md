@@ -1,6 +1,6 @@
 # 20. A streaming standby, and why it is not a backup
 
-- **Status:** Accepted — replication done, point-in-time recovery outstanding
+- **Status:** Accepted — replication and point-in-time recovery both done
 - **Recorded:** 2026-09-02
 
 ## Context
@@ -101,23 +101,83 @@ replica to serve queries a cache already answers is the expensive way round.
 
 **The replica is here to be promoted, not queried.**
 
-### Point-in-time recovery — outstanding
+### Point-in-time recovery — done
 
-Recorded here rather than in a separate record, because a document that
-described only the replication would be describing the half that does not
-protect against the likelier disaster.
+`archive_mode = on`, with every completed WAL segment copied to object storage:
 
-What it needs: `archive_mode = on` with WAL archived continuously to
-S3-compatible object storage (MinIO locally), plus periodic base backups.
-Recovery is then a base backup restored and WAL replayed up to a chosen
-timestamp — so the fix for a mistake is choosing a moment one second before it.
+```
+archive_command = mc -q cp %p backups/kintsugi-backups/wal/%f
+archive_timeout = 60
+```
 
-**And it is not done until a restore has been rehearsed.** A backup that has
-never been restored is not a backup, it is a hope; retention settings and a
-green "backup succeeded" line prove a file was written, not that anything can be
-rebuilt from it. The deliverable is the restore: seed the catalogue, note the
-time, destroy the orders table, recover to one second earlier, show the row
-counts match.
+**The exit code is load-bearing.** Postgres keeps a segment until the command
+succeeds and retries forever if it fails, so a broken archive fills the data
+directory rather than losing backups silently. That is the right failure, and it
+is why this must never end in `|| true`.
+
+`archive_timeout = 60` forces a segment switch once a minute even when idle.
+Without it a quiet database archives nothing until 16MB has accumulated, so the
+recovery point could be hours old.
+
+**A separate, private bucket.** `kintsugi-backups`, with no anonymous policy at
+all — as against `kintsugi-uploads`, which grants the world `GetObject`. A base
+backup is a byte-for-byte copy of the entire database: every password hash,
+every order, every address. One policy mistake away from being the same bucket
+is too close.
+
+**A base backup is required too, and this is the part that surprises people.**
+WAL alone restores nothing — recovery replays the log *onto* a copy. So the
+oldest recoverable moment is the oldest base backup still held, not the oldest
+WAL segment. `docker/postgres/base-backup.sh` takes one with
+`--wal-method=none`, deliberately: embedding WAL would store the same bytes
+twice and invite the belief that the base backup alone is enough.
+
+**Why `mc` and not pgBackRest, WAL-G or barman.** All three are better tools and
+all three want a package manager, a config file and a service of their own. `mc`
+is a single static binary copied from the image that already bootstraps the
+bucket — two lines and no new failure mode. It is also honest about its ceiling:
+this gives archiving and PITR, and none of the incremental backup, parallel
+restore, retention policy or verification the real tools do. Kubernetes replaces
+it with CloudNativePG's `barmanObjectStore`.
+
+### The restore is the deliverable, not the backup
+
+A backup that has never been restored is not a backup, it is a hope. Retention
+settings and a green "backup succeeded" line prove a file was written; they say
+nothing about whether anything can be rebuilt from it.
+
+`scripts/restore-drill.ts` creates a table, fills it, notes the time, forces the
+segment into object storage, **drops the table**, then recovers to the instant
+before and counts both databases:
+
+```
+                                            LIVE      RESTORED
+  restore_drill.canary rows                 gone           500
+  listings                                   927           927
+```
+
+**Into a second container on port 5435, never over the live one.** A rehearsal
+that causes an outage is a rehearsal nobody performs, and one nobody performs is
+worthless in an incident. The real procedure is the same script pointed at the
+primary's data directory.
+
+Two details that make it trustworthy rather than theatrical:
+
+- **The recovery target comes from Postgres's clock**, not the script's.
+  `recovery_target_time` is compared against commit timestamps in the WAL, so a
+  machine whose clock is a few seconds off would silently recover to the wrong
+  instant.
+- **It waits for promotion, not for connections.** A recovering database accepts
+  connections and answers queries as a read-only standby well before it has
+  finished replaying. Checking `pg_is_in_recovery()` is the difference between
+  reading the past and reading a half-replayed version of it.
+
+It also asserts the *whole* database came back, not just the drill table — 927
+listings on both sides. A restore that produced only the one table would mean
+something far stranger had happened.
+
+**Rehearsed three times consecutively, clean each time.** That is the actual
+bar: not that a restore worked once, but that it is boring.
 
 ## Consequences
 
@@ -133,6 +193,7 @@ streaming to — both are healthy and both answer queries.
 | A replication slot is active | ok |
 | The replica refuses writes (server-enforced) | ok |
 | Five committed rows arrive | median **11.1ms**, slowest 14.2ms |
+| 500 rows dropped, then recovered | all **500** back, whole database intact |
 
 And three lifecycle paths, each verified by hand rather than reasoned about:
 a first clone onto an empty volume, a rebuild onto an empty volume where the
