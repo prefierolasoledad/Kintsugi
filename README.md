@@ -301,6 +301,33 @@ never learns the backend's address. See
 Placeholder screens say so explicitly rather than presenting controls that
 don't work.
 
+## How this was built
+
+With substantial help from an AI assistant — Claude, via Anthropic's Claude Code
+CLI. Worth stating plainly rather than leaving a reader to infer it from a name
+in the contributors list.
+
+The division of labour: it wrote a lot of the code and much of the prose in
+[`docs/`](docs/). The judgement calls were mine — what to build next, what to
+leave unbuilt, and which of its suggestions to throw away. Some of this exists
+*because* I overruled it. The all-in-one container image was built, verified,
+and then deleted at my insistence over its objection
+([ADR 0023](docs/adr/0023-one-dockerfile-many-targets.md)); the concurrent-refresh
+fix ([ADR 0021](docs/adr/0021-refresh-race-grace-window.md)) exists because I
+disagreed with its plan to do backups first, on the grounds that a live bug
+outranks a precaution.
+
+The decision records are the honest artefact of that process, reversals included
+— two of the six planned caches were dropped, one of them after being built and
+measured.
+
+Five of the fifty commits carry a `Co-Authored-By: Claude` trailer, which is why
+GitHub lists a second contributor. That trailer is a line in a commit message: it
+is not a copyright assignment, a licence grant, or a signature, and the author of
+every commit is me. It stays, for the same reason the unsigned early commits stay
+— rewriting history to tidy up how something was made is the opposite of what the
+rest of this repository is for.
+
 ## License
 
 [Apache License 2.0](LICENSE) © 2026 Karan Bhatt
