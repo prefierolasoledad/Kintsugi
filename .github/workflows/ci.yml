@@ -131,6 +131,9 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      # NOTE: MinIO is NOT here, and cannot be. See the "Start MinIO" step.
+      # A service container takes no `command`, and minio/minio needs
+      # `server /data` — without it the entrypoint prints help and exits.
       postgres:
         image: postgres:16-alpine
         env:
@@ -171,6 +174,18 @@ jobs:
       # Set for BOTH the server and the test process, so the limiter under test
       # is the one the assertions are about.
       REDIS_URL: redis://localhost:6379
+
+      # Uploads go to object storage, as they do in Compose and will in
+      # Kubernetes. Not a credential: this MinIO exists for eleven minutes.
+      STORAGE_DRIVER: s3
+      S3_ENDPOINT: http://localhost:9000
+      S3_BUCKET: kintsugi-uploads
+      S3_ACCESS_KEY: kintsugi
+      S3_SECRET_KEY: kintsugi-ci-not-a-secret
+      # The address the BROWSER uses, which on a runner is the same host. In
+      # Compose these two differ — `minio:9000` for the server, `localhost:9000`
+      # for the browser — and conflating them is the bug ADR 0022 is about.
+      S3_PUBLIC_BASE: http://localhost:9000/kintsugi-uploads
       # PORT is deliberately NOT set here. A job-level PORT is inherited by
       # every step, so `next start` picked up 4000 and bound it before the API
       # could — the API died with EADDRINUSE and the health check hit the
@@ -195,6 +210,54 @@ jobs:
       - name: Install frontend
         working-directory: frontend
         run: npm ci
+
+      # ------------------------------------------------------------------
+      # Object storage, as a step rather than a service.
+      #
+      # `minio/minio` needs `server /data` and a GitHub service container has
+      # nowhere to put a command — the entrypoint would print help and exit. So
+      # it runs here, where the argument fits, and the bucket setup happens in
+      # the same place rather than in a second step that could drift from it.
+      #
+      # This covers the PRODUCTION configuration: Compose defaults
+      # STORAGE_DRIVER to s3, and until now CI ran the whole suite on local
+      # disk. The storage suite skipped 12 of its 20 assertions and nothing
+      # exercised the path the deployment uses. See ADR 0022.
+      # ------------------------------------------------------------------
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=kintsugi \
+            -e MINIO_ROOT_PASSWORD=kintsugi-ci-not-a-secret \
+            minio/minio:latest server /data
+
+          # Poll rather than sleep: MinIO is usually up in under a second and
+          # a fixed sleep would either be wasted or occasionally too short.
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null; then
+              echo "minio ready after ${i}s"; break
+            fi
+            [ "$i" = "40" ] && { echo "::error::minio did not start"; docker logs minio; exit 1; }
+            sleep 1
+          done
+
+      # Runs the REPO'S OWN bootstrap script, not a copy of it.
+      #
+      # docker/minio/minio-init.sh already creates both buckets and sets the
+      # GetObject-only policy, and its endpoint is overridable for exactly this.
+      # A second copy of that policy here would drift, and the way it would
+      # drift is by quietly regaining `s3:ListBucket` — which the storage suite
+      # asserts against. See ADR 0022.
+      - name: Create the buckets
+        run: |
+          docker run --rm --network host \
+            -e MINIO_ENDPOINT=http://localhost:9000 \
+            -e S3_ACCESS_KEY=kintsugi \
+            -e S3_SECRET_KEY=kintsugi-ci-not-a-secret \
+            -e S3_BUCKET=kintsugi-uploads \
+            -v "$PWD/docker/minio/minio-init.sh:/init.sh:ro" \
+            --entrypoint sh minio/mc:latest /init.sh
 
       # The generated client is not committed — .gitignore excludes
       # src/generated — so a fresh checkout has nothing to import. Every step

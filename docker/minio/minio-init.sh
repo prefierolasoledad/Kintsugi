@@ -15,8 +15,15 @@ set -eu
 
 BUCKET="${S3_BUCKET:-kintsugi-uploads}"
 
+# Overridable so this same script runs in CI, where MinIO is on the runner's
+# own localhost rather than a compose service name. One bootstrap
+# implementation, exercised by both — the alternative was a second copy of the
+# bucket policy in the workflow, which is exactly the sort of duplication that
+# drifts and then differs in the way that matters.
+ENDPOINT="${MINIO_ENDPOINT:-http://minio:9000}"
+
 # `local` is just an alias name for this endpoint in mc's config.
-mc alias set local http://minio:9000 "$S3_ACCESS_KEY" "$S3_SECRET_KEY" > /dev/null
+mc alias set local "$ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" > /dev/null
 
 mc mb --ignore-existing "local/${BUCKET}"
 
