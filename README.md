@@ -11,8 +11,8 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
-> verification, email, and an admin dashboard all work — covered by **823
-> assertions across 23 suites** (`npm test`), run against the real stack rather
+> verification, email, and an admin dashboard all work — covered by **870
+> assertions across 25 suites** (`npm test`), run against the real stack rather
 > than mocks. Payments and identity run against Stripe's test mode: no real
 > money moves, no real document is checked. Payouts to sellers are the one
 > significant feature not built. See [What's built](#whats-built).
@@ -41,37 +41,27 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 **Prerequisites:** Node.js 20+ (developed on 24), Docker, npm.
 
-### One container
-
-The fastest way to see it running. The API and the storefront share a single
-container, with a supervisor running both.
+### Everything, in one command
 
 ```bash
 git clone https://github.com/prefierolasoledad/Kintsugi.git && cd Kintsugi
-docker compose --profile allinone up --build
-docker compose run --rm seed         # 7 categories, 27 listings, reviews
-```
-
-This is a convenience for demos, not the deployment shape — two tiers in one
-container cannot be scaled independently, which is the property everything else
-here is built to preserve. See
-[ADR 0023](docs/adr/0023-all-in-one-image.md).
-
-### Or as separate services, which is the real shape
-
-```bash
-docker compose up --build            # postgres, redis, minio, migrations, api, web
-docker compose run --rm seed
+docker compose up --build
+docker compose --profile tools run --rm seed   # 7 categories, 27 listings, reviews
 ```
 
 The storefront is on http://localhost:3000, the API on http://localhost:4000, and
 MinIO's console on http://localhost:9001 (`kintsugi` / `kintsugi-dev-secret`).
 
-Two jobs run to completion before the API starts, rather than the API doing
-either at boot: `migrate` applies the migration history, and `minio-init`
-creates the uploads bucket. Both are shortcuts that break the moment there is
-more than one replica — several containers racing `migrate deploy`, or racing to
-set the same bucket policy.
+**Two of the seven containers exit immediately, and that is correct.** `migrate`
+applies the migration history and `minio-init` creates the uploads bucket, both
+running to completion before the API starts. Doing either at API startup is the
+usual shortcut and it breaks the moment there is more than one replica —
+several containers racing `migrate deploy`, or racing to set the same bucket
+policy. Each maps directly onto a Kubernetes Job. A *running* migration
+container would be the bug.
+
+All images come from the single [`Dockerfile`](Dockerfile), selected by build
+target — see [ADR 0023](docs/adr/0023-one-dockerfile-many-targets.md).
 
 ### Running the servers locally
 
@@ -110,7 +100,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**823 assertions across 23 suites**, and they drive the actual stack — a real
+**870 assertions across 25 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -247,9 +237,9 @@ Kintsugi/
 │       ├── app/        Routes, including BFF handlers under app/api/*
 │       ├── components/ UI, including the admin dashboard
 │       └── lib/        API clients, auth context, catalog helpers
-├── docker/             Postgres replication, MinIO bootstrap, the supervisor
+├── docker/             Postgres replication and backups, MinIO bootstrap
 ├── docs/               Architecture, ADRs, API reference
-├── Dockerfile          The all-in-one image (API + storefront in one)
+├── Dockerfile          Every image: targets api, web, api-build
 └── docker-compose.yml  postgres, redis, minio, migrate, seed, api, web
 ```
 

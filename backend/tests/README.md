@@ -200,7 +200,7 @@ code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-823 assertions across 23 suites.
+870 assertions across 25 suites.
 
 | Suite | Covers |
 |---|---|
@@ -214,6 +214,8 @@ code that is provably correct, which is a miserable hour to debug.
 | `refresh` | rotation, the concurrency race, and the four ways a replay is still theft |
 | `ratelimit` | shared counters, atomic increment, both failure policies, login throttling |
 | `cache` | hit/miss, TTL, stale-while-revalidate, negative caching, invalidation over HTTP |
+| `storage` | both drivers; the browser's URL is not the server's; the bucket is not listable |
+| `uploads` | a real photo through the BFF: EXIF stripped, re-encoded, resized, deletion reaches storage |
 | `identity` | Stripe Identity, signed webhooks, the payout gate |
 | `identity-stale` | a stub session left pending across a provider switch |
 | `admin` | CLI grant, TOTP step-up, single-use codes, dashboard reads, audit trail |
