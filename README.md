@@ -40,12 +40,27 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 **Prerequisites:** Node.js 20+ (developed on 24), Docker, npm.
 
-### Everything in containers
+### One container
+
+The fastest way to see it running. The API and the storefront share a single
+container, with a supervisor running both.
 
 ```bash
 git clone https://github.com/prefierolasoledad/Kintsugi.git && cd Kintsugi
-docker compose up --build            # postgres, redis, minio, migrations, api, web
+docker compose --profile allinone up --build
 docker compose run --rm seed         # 7 categories, 27 listings, reviews
+```
+
+This is a convenience for demos, not the deployment shape — two tiers in one
+container cannot be scaled independently, which is the property everything else
+here is built to preserve. See
+[ADR 0023](docs/adr/0023-all-in-one-image.md).
+
+### Or as separate services, which is the real shape
+
+```bash
+docker compose up --build            # postgres, redis, minio, migrations, api, web
+docker compose run --rm seed
 ```
 
 The storefront is on http://localhost:3000, the API on http://localhost:4000, and
@@ -183,7 +198,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 22 ADRs on why things are built the way they are |
+| [Decision records](docs/adr/README.md) | 23 ADRs on why things are built the way they are |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
@@ -211,8 +226,10 @@ Kintsugi/
 │       ├── app/        Routes, including BFF handlers under app/api/*
 │       ├── components/ UI, including the admin dashboard
 │       └── lib/        API clients, auth context, catalog helpers
+├── docker/             Postgres replication, MinIO bootstrap, the supervisor
 ├── docs/               Architecture, ADRs, API reference
-└── docker-compose.yml  postgres, redis, migrate, seed, api, web
+├── Dockerfile          The all-in-one image (API + storefront in one)
+└── docker-compose.yml  postgres, redis, minio, migrate, seed, api, web
 ```
 
 The browser only ever talks to the Next.js server. Next.js acts as a

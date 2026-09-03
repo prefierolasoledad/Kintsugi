@@ -47,14 +47,56 @@ RUN npm run build
 # ------------------------------------------------------------------
 # Production dependencies only.
 #
-# Separate from `deps` so the runtime image never contains typescript, tsx, the
-# Prisma CLI, or Playwright — the last of which is around 400MB installed and
-# exists purely for the browser suites.
+# Separate from `deps` so the runtime image never contains tsx or Playwright —
+# the latter is around 400MB installed and exists purely for the browser suites.
+#
+# `--omit=dev` IS NOT ENOUGH, which took measuring to notice.
+#
+# `@prisma/client` declares the Prisma CLI and TypeScript as OPTIONAL PEER
+# dependencies:
+#
+#   peerDependencies:     { "prisma": "*", "typescript": ">=5.4.0" }
+#   peerDependenciesMeta: { "prisma": {"optional": true}, ... }
+#
+# npm installs optional peers anyway, and marks them `devOptional` in the
+# lockfile — reachable both as a devDependency and as an optional peer. So
+# `--omit=dev` keeps them, and a production image ends up carrying the CLI, the
+# TypeScript compiler, and Prisma Studio's entire React UI. Measured: 470MB of
+# "production" dependencies, of which 204MB is that.
+#
+# `--omit=optional` does drop them, and also drops sharp's platform binaries —
+# `@img/sharp-linux-x64` — so image processing throws on the first upload. It
+# removes about ninety other packages too, any of which might be needed on a
+# path the tests do not reach. Rejected as a blunt instrument.
+#
+# So: delete exactly what the CLI drags in, and nothing else. The list is
+# hand-maintained, which is the honest cost; every entry is here because
+# `npm ls` traced it to one of the four Prisma dev packages above it.
+#
+# IN THE SAME `RUN` AS THE INSTALL, deliberately. A separate layer would delete
+# the files from the filesystem and leave them in the image — layers are
+# additive, so removing something in a later step makes the image bigger, not
+# smaller.
 # ------------------------------------------------------------------
 FROM node:24-slim AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+ && rm -rf \
+      node_modules/prisma \
+      node_modules/typescript \
+      node_modules/@prisma/config \
+      node_modules/@prisma/dev \
+      node_modules/@prisma/studio-core \
+      node_modules/@electric-sql \
+      node_modules/@radix-ui \
+      node_modules/@visx \
+      node_modules/react \
+      node_modules/react-dom \
+      node_modules/scheduler \
+      node_modules/effect \
+      node_modules/elkjs \
+ && node -e "require('@prisma/adapter-pg'); require('sharp'); console.log('runtime deps still resolve after prune')"
 
 
 # ------------------------------------------------------------------

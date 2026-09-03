@@ -7,10 +7,11 @@
 # `migrate deploy` against one database. A job that runs once maps directly onto
 # a Kubernetes Job, which is where this is going next.
 #
-#   docker compose up --build          the stack
-#   docker compose run --rm seed       seed the catalogue (one-shot, on demand)
-#   docker compose --profile ha up -d  add a streaming standby
-#   docker compose down -v             stop and delete the data volumes
+#   docker compose up --build              the stack
+#   docker compose run --rm seed           seed the catalogue (one-shot, on demand)
+#   docker compose --profile ha up -d      add a streaming standby
+#   docker compose --profile allinone up   API + storefront in ONE container
+#   docker compose down -v                 stop and delete the data volumes
 
 services:
   postgres:
@@ -282,6 +283,58 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # ------------------------------------------------------------------
+  # The same application, as ONE container.
+  #
+  #   docker compose --profile allinone up
+  #
+  # A supervisor runs the API and the storefront side by side, and the
+  # storefront reaches the API over loopback rather than the network. Datastores
+  # are still separate services, because bundling Postgres into an application
+  # image is a different and much worse idea — its data would live and die with
+  # the container.
+  #
+  # Behind a profile because it is an ALTERNATIVE to `api` + `web`, not an
+  # addition: running both would collide on ports 3000 and 4000. It exists for
+  # demos and for machines where orchestrating several containers is not worth
+  # it, and it deliberately gives up independent scaling of the two tiers —
+  # which is the property the split services exist to keep.
+  # ------------------------------------------------------------------
+  allinone:
+    build:
+      context: .
+    restart: unless-stopped
+    profiles: [allinone]
+    environment:
+      DATABASE_URL: postgresql://kintsugi:kintsugi@postgres:5432/kintsugi
+      FRONTEND_ORIGIN: http://localhost:3000
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stub}
+      KYC_PROVIDER: ${KYC_PROVIDER:-stub}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_compose_dummy_for_stub_mode}
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-console}
+      MAIL_FROM: ${MAIL_FROM:-Kintsugi <no-reply@kintsugi.local>}
+      JWT_SECRET: ${JWT_SECRET:-compose-only-not-a-real-secret-000000}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-s3}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-kintsugi-uploads}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-kintsugi}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-kintsugi-dev-secret}
+      S3_PUBLIC_BASE: ${S3_PUBLIC_BASE:-http://localhost:9000/${S3_BUCKET:-kintsugi-uploads}}
+    ports:
+      - "3000:3000"
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   kintsugi-postgres:
