@@ -18,6 +18,13 @@ export type Sale = {
     placedAt: string;
   };
   fulfilment: FulfilmentStatus;
+  /**
+   * Whether the money for this line has gone back.
+   *
+   * Not derivable from `fulfilment`: a moderator can refund a line that shipped
+   * and arrived after a dispute, so DELIVERED and refunded is a real state.
+   */
+  refunded: boolean;
   shippedAt: string | null;
   deliveredAt: string | null;
   carrier: string | null;
@@ -40,6 +47,16 @@ export type SalesSummary = {
   toSend: number;
   shipped: number;
   delivered: number;
+  /**
+   * Lines whose money went back, counted separately and EXCLUDED from
+   * `soldCount` and `grossCents` — a sale that was refunded is not something
+   * the seller sold, and certainly not something they earned.
+   *
+   * This field was returned by the API and missing from this type, so nothing
+   * warned that the page was dropping it. The totals were right and the reason
+   * they were lower than the rows beneath them was invisible.
+   */
+  refunded: number;
   soldCount: number;
   /** Gross, before any fee. Not a payout balance — there is no payout pipeline. */
   grossCents: number;

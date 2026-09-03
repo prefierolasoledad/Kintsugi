@@ -101,7 +101,7 @@ function fetchSales(sellerId: string, where: object, take: number) {
   });
 }
 
-function serialize(row: SaleRow) {
+function serialize(row: SaleRow, refunded = false) {
   const o = row.order;
   return {
     id: row.id,
@@ -111,6 +111,21 @@ function serialize(row: SaleRow) {
     currency: o.currency,
     slug: row.listing?.slug ?? null,
     image: row.listing?.images[0]?.url ?? null,
+
+    /**
+     * Whether the money for THIS line has gone back.
+     *
+     * Separate from `fulfilment`, and both are needed. A seller can mark a line
+     * unfulfillable — which refunds it — but a moderator can also refund a line
+     * that shipped and arrived, after a dispute. So DELIVERED and refunded is a
+     * real combination, and inferring one from the other would misreport it.
+     *
+     * Without this the seller sees the line at its full price in a list, learns
+     * nothing, and the summary's totals silently disagree with it — the totals
+     * exclude refunded lines, as they should, so the rows would add up to more
+     * than the figure above them with no explanation on screen.
+     */
+    refunded,
 
     order: {
       id: o.id,
@@ -161,8 +176,16 @@ export async function listSales(
         ? { fulfilment: { in: [FulfilmentStatus.SHIPPED, FulfilmentStatus.DELIVERED] } }
         : {};
 
-  const rows = await fetchSales(sellerId, where, take);
-  return rows.map(serialize);
+  // Fetched alongside the rows rather than per row: one query for the whole
+  // page instead of N, and it is the same helper the summary counts with, so
+  // the list and the totals above it cannot disagree about what "refunded"
+  // means.
+  const [rows, refundedIds] = await Promise.all([
+    fetchSales(sellerId, where, take),
+    refundedLines(sellerId),
+  ]);
+
+  return rows.map((row) => serialize(row, refundedIds.has(row.id)));
 }
 
 /** Counts for the dashboard tabs, so a seller sees what needs doing. */
@@ -242,7 +265,13 @@ export async function getSale(sellerId: string, orderItemId: string) {
     where: { id: orderItemId, sellerId, order: { status: SETTLED } },
     select: saleSelect,
   });
-  return row ? serialize(row) : null;
+  if (!row) return null;
+
+  // Asked for even though it is one line: `serialize` defaults `refunded` to
+  // false, and a default that quietly reports a refunded line as not refunded
+  // is worse than not having the field. One extra query on a single-row read.
+  const refundedIds = await refundedLines(sellerId);
+  return serialize(row, refundedIds.has(row.id));
 }
 
 /**

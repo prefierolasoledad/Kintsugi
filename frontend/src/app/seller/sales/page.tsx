@@ -86,7 +86,7 @@ export default function SalesPage() {
       </p>
 
       {summary && (
-        <dl className="mt-8 grid gap-4 sm:grid-cols-4">
+        <dl className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Stat label="Needs sending" value={String(summary.toSend)} highlight={summary.toSend > 0} />
           <Stat label="Sent" value={String(summary.shipped)} />
           <Stat label="Delivered" value={String(summary.delivered)} />
@@ -95,9 +95,33 @@ export default function SalesPage() {
             value={formatPrice(summary.grossCents, "USD")}
             /* "Gross" on purpose. There is no payout pipeline, so calling this
                earnings would imply money is waiting somewhere for them. */
-            note="before fees · no payouts yet"
+            note={
+              summary.refunded > 0
+                ? `before fees · ${summary.refunded} refunded ${
+                    summary.refunded === 1 ? "sale" : "sales"
+                  } excluded`
+                : "before fees · no payouts yet"
+            }
           />
         </dl>
+      )}
+
+      {/**
+       * Only when there is something to explain.
+       *
+       * The figure above is net of refunds, which is correct — but it means the
+       * rows below can add up to more than it does, and with nothing on screen
+       * saying why, that reads as the page being wrong rather than as the money
+       * having gone back. A permanent zero-state row would be noise for the
+       * sellers who have never had one.
+       */}
+      {summary && summary.refunded > 0 && (
+        <p className="mt-4 text-sm text-ink-dim">
+          {summary.refunded === 1
+            ? "One sale was refunded and is not counted in the total above."
+            : `${summary.refunded} sales were refunded and are not counted in the total above.`}{" "}
+          They are still listed, marked <span className="text-clay">Refunded</span>.
+        </p>
       )}
 
       {error && (
@@ -236,11 +260,33 @@ function SaleCard({ sale, onChanged }: { sale: Sale; onChanged: () => void }) {
             <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${tone}`}>
               {FULFILMENT_LABEL[sale.fulfilment]}
             </span>
+
+            {/**
+             * A SECOND badge, beside the fulfilment one rather than replacing it.
+             *
+             * Both facts are true at once and neither implies the other: a line
+             * can be DELIVERED and refunded, if a moderator settled a dispute
+             * after it arrived. Collapsing them into one badge would have to
+             * pick which fact to hide.
+             */}
+            {sale.refunded && (
+              <span className="rounded-full border border-clay/50 bg-clay/10 px-2.5 py-0.5 text-xs font-medium text-clay">
+                Refunded
+              </span>
+            )}
           </div>
 
           <p className="mt-1 text-sm text-gold-dim">
-            {formatPrice(sale.unitPriceCents, sale.currency)}
-            {sale.quantity > 1 && ` × ${sale.quantity}`}
+            {/* Struck through when the money went back: the number is still the
+                price that was paid, and it is no longer a number the seller has.
+                Showing it plain is how a row disagrees with the total above it. */}
+            <span className={sale.refunded ? "line-through opacity-60" : undefined}>
+              {formatPrice(sale.unitPriceCents, sale.currency)}
+              {sale.quantity > 1 && ` × ${sale.quantity}`}
+            </span>
+            {sale.refunded && (
+              <span className="ml-2 text-xs text-ink-dim">returned to the buyer</span>
+            )}
           </p>
           <p className="mt-1 text-xs text-ink-dim">
             {sale.order.reference} · bought by {sale.order.buyerName}

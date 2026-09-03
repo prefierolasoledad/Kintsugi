@@ -175,6 +175,43 @@ void main(
     t.check(after.json.summary.refunded >= 1,
       "counted as refunded in their summary", after.json?.summary?.refunded);
 
+    /**
+     * AND THE LINE ITSELF SAYS SO.
+     *
+     * The summary count alone is not enough, which is how this shipped wrong:
+     * the totals excluded refunded lines (correctly) while every row rendered
+     * at full price with nothing distinguishing it. The rows added up to more
+     * than the figure above them and the page gave no reason why, so the
+     * arithmetic looked broken rather than the money looking returned.
+     *
+     * A seller with several sales also has to know WHICH one came back, and a
+     * count cannot tell them.
+     */
+    const refundedLine = after.json.sales.find((x: { id: string }) => x.id === line.id);
+    t.check(refundedLine?.refunded === true,
+      "and the line itself is marked refunded, not just counted",
+      `refunded=${refundedLine?.refunded}`);
+
+    const others = after.json.sales.filter((x: { id: string }) => x.id !== line.id);
+    t.check(others.every((x: { refunded: boolean }) => x.refunded === false),
+      "while sales that were not refunded are not marked",
+      `${others.filter((x: { refunded: boolean }) => x.refunded).length} wrongly marked of ${others.length}`);
+
+    /**
+     * The single-sale read has to agree with the list.
+     *
+     * It calls the same `serialize`, whose `refunded` argument defaults to
+     * false — so a caller that forgets to pass it gets a confident lie rather
+     * than a missing field. Asserted rather than skipped-if-unavailable: a
+     * conditional assertion that never runs is indistinguishable from one that
+     * passes.
+     */
+    const one = await seller.get(`/api/seller/sales/${line.id}`);
+    t.check(one.status === 200, "the single-sale view serves a refunded line", one.status);
+    t.check(one.json?.sale?.refunded === true,
+      "and marks it refunded there too, not just in the list",
+      `refunded=${one.json?.sale?.refunded}`);
+
     /* ============================================================ *
      * 3. Never more than came in.
      *
