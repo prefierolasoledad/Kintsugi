@@ -18,6 +18,10 @@ for the schema and its invariants.
 **Wondering why something is built a certain way?** [adr/](adr/README.md). If the
 answer isn't there and the decision wasn't obvious, that's a gap worth filling.
 
+**Looking at work not yet done?** [plans/](plans/). Everything else here
+describes code that exists; those describe code that does not, and say so at the
+top. A plan is deleted once its last phase lands.
+
 ## Contents
 
 ```
@@ -28,7 +32,8 @@ docs/
 │   ├── lld.md           Modules, flows, sequence diagrams, conventions
 │   └── data-model.md    ER diagram, tables, invariants, migrations
 ├── api.md               Endpoint reference
-└── adr/                 Numbered decision records
+├── adr/                 Numbered decision records
+└── plans/               Work not yet built. Deleted as it lands.
 ```
 
 ## Keeping this honest
