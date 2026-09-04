@@ -135,15 +135,38 @@ function transporter(): Promise<Transporter> {
  * Sending
  * ------------------------------------------------------------------ */
 
-type Message = { to: string; subject: string; text: string; html: string };
+type Message = {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  /**
+   * Extra headers. Used for List-Unsubscribe, which is what makes a mail
+   * client's own unsubscribe button appear — see lib/unsubscribe.ts.
+   */
+  headers?: Record<string, string>;
+};
 
-async function deliver(message: Message, consoleLabel: string, consoleBody: string) {
+/**
+ * Returns the provider's message id where there is one.
+ *
+ * The two account emails ignore it: they are best-effort by design and there is
+ * nothing to record it on. Notification email stores it in the delivery ledger,
+ * which is what lets a moderator answer "did the buyer get the refund email?"
+ * with a provider reference rather than a shrug.
+ */
+async function deliver(
+  message: Message,
+  consoleLabel: string,
+  consoleBody: string,
+  rethrow = false
+): Promise<{ messageId: string | null }> {
   if (transportKind() === "console") {
     console.log("\n" + "=".repeat(70));
     console.log(`[dev-mode email] ${consoleLabel} for ${message.to}`);
     console.log(consoleBody);
     console.log("=".repeat(70) + "\n");
-    return;
+    return { messageId: null };
   }
 
   try {
@@ -158,15 +181,30 @@ async function deliver(message: Message, consoleLabel: string, consoleBody: stri
     const preview = nodemailer.getTestMessageUrl(info);
     if (preview) console.log(`[mail] ${message.to} -> read it at ${preview}`);
     else console.log(`[mail] sent to ${message.to} (${info.messageId})`);
+
+    return { messageId: info.messageId ?? null };
   } catch (err) {
-    // Loud, and swallowed. See the note at the top of this file: the account
-    // already exists, so failing the request would be worse than not sending.
+    /**
+     * Swallowed for the two ACCOUNT emails, rethrown for notifications.
+     *
+     * The difference is whether anything is recording the outcome. A failed
+     * verification email has nowhere to be written down, the account already
+     * exists, and the product has a resend path — so failing the request would
+     * be strictly worse than not sending.
+     *
+     * A failed notification email has the delivery ledger waiting for it, and
+     * swallowing the error there would mark it SENT when it was not, which is
+     * exactly the lie ADR 0026 exists to prevent.
+     */
+    if (rethrow) throw err;
+
     console.error(
       `\n[mail] FAILED to send "${message.subject}" to ${message.to}\n` +
         `  ${(err as Error).message}\n` +
         `  The account was still created. They can request another link at ` +
         `/auth/resend-verification.\n`
     );
+    return { messageId: null };
   }
 }
 
@@ -273,4 +311,116 @@ export async function sendVerificationEmail(email: string, verifyUrl: string) {
     "Verification link",
     verifyUrl
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * Notification email
+ *
+ * Everything above is an ACCOUNT email — a link somebody is waiting for,
+ * addressed to an inbox rather than to a user. What follows is about something
+ * that happened to a person who already has an account, which changes three
+ * things: it is governed by preferences, it must carry an unsubscribe path, and
+ * its outcome is recorded in the delivery ledger.
+ * ------------------------------------------------------------------ */
+
+/**
+ * The message body is NOT rendered here.
+ *
+ * `title` and `body` were written when the notification was created and are
+ * already addressed to this person in plain language — "Cast iron skillet
+ * sold", "You've been refunded for it". Re-deriving a subject line from the
+ * event type would produce something worse and would drift from what the same
+ * person sees in the app.
+ *
+ * So the email is a frame around text that already exists. That is also what
+ * keeps this function from needing a template per NotificationType, and a new
+ * type from needing one before it can be emailed at all.
+ */
+export async function sendNotificationEmail(input: {
+  to: string;
+  title: string;
+  body: string | null;
+  /** Absolute URL, or null when the notification has nowhere to go. */
+  actionUrl: string | null;
+  actionLabel: string;
+  unsubscribeUrl: string;
+  headers: Record<string, string>;
+}): Promise<{ messageId: string | null }> {
+  const footer =
+    `\n\nYou are receiving this because of activity on your Kintsugi account.` +
+    `\nChange what you are emailed about: ${input.unsubscribeUrl}`;
+
+  return deliver(
+    {
+      to: input.to,
+      subject: input.title,
+      text:
+        [input.title, "", input.body ?? "", input.actionUrl ? `\n${input.actionUrl}` : ""]
+          .filter(Boolean)
+          .join("\n")
+          .trim() + footer,
+      html: wrapNotification(
+        input.title,
+        input.body,
+        input.actionUrl ? { label: input.actionLabel, url: input.actionUrl } : undefined,
+        input.unsubscribeUrl
+      ),
+      headers: input.headers,
+    },
+    `Notification: ${input.title}`,
+    [input.body, input.actionUrl].filter(Boolean).join("\n"),
+    // Rethrow, so the ledger records FAILED instead of SENT.
+    true
+  );
+}
+
+/**
+ * Like wrap(), with a different footer.
+ *
+ * Not folded into wrap() with a flag: the account footer says "you are getting
+ * this because someone typed this address into a signup form, and nothing
+ * happens unless you click", which is true of a verification link and false of
+ * everything here. One frame saying both would be saying neither.
+ */
+function wrapNotification(
+  heading: string,
+  body: string | null,
+  cta: { label: string; url: string } | undefined,
+  unsubUrl: string
+) {
+  return `<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#000">
+    <div style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:32px">
+      <p style="margin:0 0 24px;font-size:18px;font-weight:600;letter-spacing:-0.01em">Kintsugi</p>
+      <h1 style="margin:0 0 16px;font-size:22px;font-weight:600;line-height:1.3">${escapeHtml(heading)}</h1>
+      ${body ? `<div style="font-size:15px;line-height:1.6;color:#3c4043">${escapeHtml(body)}</div>` : ""}
+      ${
+        cta
+          ? `<p style="margin:28px 0 0">
+        <a href="${cta.url}" style="display:inline-block;background:#c93131;color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-size:15px;font-weight:600">${escapeHtml(cta.label)}</a>
+      </p>`
+          : ""
+      }
+      <p style="margin:28px 0 0;padding-top:20px;border-top:1px solid #e5e5e5;font-size:12px;line-height:1.6;color:#5f6368">
+        You are receiving this because of activity on your Kintsugi account.<br>
+        <a href="${unsubUrl}" style="color:#5f6368">Change what you are emailed about</a>.
+      </p>
+    </div>
+  </body>
+</html>`;
+}
+
+/**
+ * Notification text is user-supplied in every practical sense — a listing title
+ * a seller typed, a moderator's stated reason — and it lands in HTML here. The
+ * two account emails above interpolate only URLs this server built, which is
+ * why they have never needed this.
+ */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

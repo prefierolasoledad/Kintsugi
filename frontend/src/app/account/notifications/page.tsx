@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import Footer from "@/components/Footer";
 import Nav from "@/components/Nav";
+import NotificationPreferences from "@/components/NotificationPreferences";
+import PushToggle from "@/components/PushToggle";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import { useNotifications } from "@/lib/NotificationContext";
@@ -196,6 +198,13 @@ export default function NotificationsPage() {
           ))}
         </ul>
       )}
+
+      {/* Below the list, not above it: people come here to read what happened,
+          and settings are the thing they occasionally come here to change. */}
+      <div className="mt-12 space-y-6">
+        <PushToggle />
+        <NotificationPreferences />
+      </div>
     </Shell>
   );
 }

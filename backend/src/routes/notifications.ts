@@ -9,15 +9,268 @@ import {
   markRead,
   removeNotification,
 } from "../lib/notifications";
+import {
+  ALWAYS_EMAILED,
+  isOffered,
+  preferencesFor,
+  setPreference,
+  unsubscribeAllOptional,
+} from "../lib/channelPolicy";
+import { readUnsubscribeToken } from "../lib/unsubscribe";
+import {
+  isPushConfigured,
+  listSubscriptions,
+  removeSubscription,
+  saveSubscription,
+  vapidPublicKey,
+} from "../lib/push";
+import { prisma } from "../lib/prisma";
+import { DeliveryChannel, NotificationType } from "../generated/prisma/enums";
 
 export const notificationsRouter = Router();
-
-notificationsRouter.use(requireAuth);
 
 function fail(res: import("express").Response, err: unknown, fallback: string) {
   console.error(fallback, err);
   return res.status(500).json({ error: fallback });
 }
+
+/* ------------------------------------------------------------------ *
+ * Unsubscribe — DELIBERATELY BEFORE requireAuth
+ *
+ * These two are the only unauthenticated routes in this file, and they have to
+ * be: the person clicking is reading an email, possibly years later, on a
+ * device that was never signed in. An unsubscribe that asks for a password is
+ * an unsubscribe people replace with the spam button, and a spam report costs
+ * the sending domain far more than the mail they objected to.
+ *
+ * The token carries its own authority — an HMAC over (user, channel, scope)
+ * under a key derived from JWT_SECRET. It authorises exactly one thing: turning
+ * something OFF. It cannot sign anybody in, read anything, or turn a
+ * notification back on.
+ *
+ * See docs/adr/0027-notification-consent-and-preferences.md
+ * ------------------------------------------------------------------ */
+
+/**
+ * Says what a token would do, WITHOUT doing it.
+ *
+ * A GET must not change anything here, and not only on principle: mail scanners
+ * and link prefetchers fetch every URL in a message. A GET that unsubscribed
+ * would silently opt people out of mail they never chose to leave, and the
+ * first evidence would be somebody asking why they stopped getting order
+ * updates.
+ */
+notificationsRouter.get("/unsubscribe", async (req, res) => {
+  try {
+    const token = readUnsubscribeToken(
+      typeof req.query.token === "string" ? req.query.token : undefined
+    );
+    if (!token) {
+      return res.status(400).json({ error: "That link is not valid.", code: "BAD_TOKEN" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: token.userId },
+      select: { email: true },
+    });
+    if (!user) {
+      return res.status(400).json({ error: "That link is not valid.", code: "BAD_TOKEN" });
+    }
+
+    res.json({
+      channel: token.channel,
+      scope: token.scope,
+      /**
+       * Masked. The token proves possession of a link, not of the inbox, and a
+       * forwarded email should not hand somebody else a full address. Enough to
+       * confirm "yes, this is my account" and no more.
+       */
+      email: maskEmail(user.email),
+      alwaysSent: ALWAYS_EMAILED,
+    });
+  } catch (err) {
+    fail(res, err, "Could not read that link.");
+  }
+});
+
+/**
+ * Performs it. Also the RFC 8058 one-click target named in List-Unsubscribe-Post,
+ * which is what makes Gmail and Outlook show their own unsubscribe button.
+ */
+notificationsRouter.post("/unsubscribe", async (req, res) => {
+  try {
+    const raw =
+      (typeof req.query.token === "string" ? req.query.token : undefined) ??
+      (typeof req.body?.token === "string" ? req.body.token : undefined);
+
+    const token = readUnsubscribeToken(raw);
+    if (!token) {
+      return res.status(400).json({ error: "That link is not valid.", code: "BAD_TOKEN" });
+    }
+
+    if (token.scope === "all") {
+      const count = await unsubscribeAllOptional(token.userId, token.channel);
+      return res.json({ ok: true, turnedOff: count, scope: "all" });
+    }
+
+    /**
+     * The money-adjacent messages stay on, even from an "unsubscribe from this
+     * type" link, because there is no such link for them — they are excluded
+     * from ALWAYS_EMAILED's complement. Reaching here with one means a
+     * hand-edited token, and the honest answer is that it did nothing.
+     */
+    if (ALWAYS_EMAILED.includes(token.scope)) {
+      return res.json({ ok: true, turnedOff: 0, scope: token.scope, refused: true });
+    }
+
+    await setPreference({
+      userId: token.userId,
+      type: token.scope,
+      channel: token.channel,
+      enabled: false,
+    });
+
+    res.json({ ok: true, turnedOff: 1, scope: token.scope });
+  } catch (err) {
+    fail(res, err, "Could not update your preferences.");
+  }
+});
+
+function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "•••";
+  const name = email.slice(0, at);
+  const shown = name.slice(0, Math.min(2, name.length));
+  return `${shown}${"•".repeat(Math.max(3, name.length - shown.length))}${email.slice(at)}`;
+}
+
+/* Everything below needs a session. */
+notificationsRouter.use(requireAuth);
+
+/* ------------------------------------------------------------------ *
+ * Push devices
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the browser needs before it can subscribe.
+ *
+ * The VAPID public key is public by design — a subscription made with it is
+ * still useless to anybody without the private half, which never leaves the
+ * environment. `enabled: false` is a real answer, not an error: a server with
+ * no keys has no push channel, and the UI should say so rather than offer a
+ * button that fails.
+ */
+notificationsRouter.get("/push/key", (_req, res) => {
+  res.json({ enabled: isPushConfigured(), publicKey: vapidPublicKey() });
+});
+
+notificationsRouter.get("/push/devices", async (req, res) => {
+  try {
+    res.json({ devices: await listSubscriptions(req.userId!) });
+  } catch (err) {
+    fail(res, err, "Could not list your devices.");
+  }
+});
+
+const subscription = z.object({
+  endpoint: z.string().url().max(2000),
+  keys: z.object({
+    p256dh: z.string().min(1).max(500),
+    auth: z.string().min(1).max(500),
+  }),
+});
+
+notificationsRouter.post("/push/subscribe", async (req, res) => {
+  try {
+    const parsed = subscription.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Check the request.", code: "INVALID_INPUT" });
+    }
+
+    await saveSubscription({
+      userId: req.userId!,
+      endpoint: parsed.data.endpoint,
+      p256dh: parsed.data.keys.p256dh,
+      auth: parsed.data.keys.auth,
+      // Truncated: it is only ever shown in a device list, and a browser is
+      // free to send a very long one.
+      userAgent: req.header("user-agent")?.slice(0, 200) ?? null,
+    });
+
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    fail(res, err, "Could not enable notifications on this device.");
+  }
+});
+
+notificationsRouter.post("/push/unsubscribe", async (req, res) => {
+  try {
+    const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint : null;
+    if (!endpoint) {
+      return res.status(400).json({ error: "Check the request.", code: "INVALID_INPUT" });
+    }
+
+    // Scoped by user inside removeSubscription, so nobody can unsubscribe
+    // somebody else's device by guessing an endpoint.
+    const removed = await removeSubscription(req.userId!, endpoint);
+
+    // Removing something already gone is a success. Unsubscribing twice — two
+    // tabs, or a retry — is normal, and an error there would be noise.
+    res.json({ removed });
+  } catch (err) {
+    fail(res, err, "Could not turn off notifications on this device.");
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Preferences
+ * ------------------------------------------------------------------ */
+
+notificationsRouter.get("/preferences", async (req, res) => {
+  try {
+    res.json({ preferences: await preferencesFor(req.userId!) });
+  } catch (err) {
+    fail(res, err, "Could not load your notification settings.");
+  }
+});
+
+const preferenceUpdate = z.object({
+  type: z.enum(Object.values(NotificationType) as [string, ...string[]]),
+  channel: z.enum(Object.values(DeliveryChannel) as [string, ...string[]]),
+  enabled: z.boolean(),
+});
+
+notificationsRouter.put("/preferences", async (req, res) => {
+  try {
+    const parsed = preferenceUpdate.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Check the request.", code: "INVALID_INPUT" });
+    }
+
+    const { type, channel, enabled } = parsed.data;
+
+    // A channel the product never sends this type on is a 400 rather than a
+    // silent no-op: the UI does not offer the switch, so getting here means a
+    // client is out of date or hand-rolled, and it should hear about it.
+    if (!isOffered(type as never, channel as never)) {
+      return res.status(400).json({
+        error: `${channel} is not used for ${type}.`,
+        code: "CHANNEL_NOT_OFFERED",
+      });
+    }
+
+    await setPreference({
+      userId: req.userId!,
+      type: type as never,
+      channel: channel as never,
+      enabled,
+    });
+
+    res.json({ preferences: await preferencesFor(req.userId!) });
+  } catch (err) {
+    fail(res, err, "Could not save that setting.");
+  }
+});
 
 const query = z.object({
   unread: z.enum(["true", "false"]).optional(),

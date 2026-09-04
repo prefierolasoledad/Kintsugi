@@ -1,4 +1,6 @@
 import type { NotificationEvent } from "./outbox";
+import { emailConsumer } from "./consumers/email";
+import { pushConsumer } from "./consumers/push";
 
 /**
  * The channel consumers.
@@ -9,12 +11,17 @@ import type { NotificationEvent } from "./outbox";
  * code on both paths, so the suite exercises the real handler and only the
  * broker is absent.
  *
- * PHASE 1 HAS ONE CONSUMER, AND IT ONLY LOGS.
- * Email is phase 2, push phase 3, SMS phase 4. They are not stubbed here —
- * there is no `emailConsumer` returning early, because a stub that silently
- * does nothing is indistinguishable from a channel that is broken. When email
- * lands it appears in this list; until then the honest state is that one
- * consumer exists.
+ * WHAT IS HERE, AND WHAT IS NOT
+ * Email (phase 2) and push (phase 3) are real. SMS is phase 4 and is NOT
+ * stubbed here — there is no `smsConsumer` returning early, because a stub that
+ * silently does nothing is indistinguishable from a channel that is broken.
+ * When it lands it appears in this list; until then the honest state is that it
+ * does not exist.
+ *
+ * EVERY CONSUMER GOES THROUGH deliveryLedger.deliver(). That is what resolves
+ * preferences, claims the delivery, and settles the outcome — and it is the
+ * only reason a redelivered event is not a second message. A consumer that
+ * sends without it is a bug, not a shortcut.
  *
  * See docs/plans/0001-multi-channel-notifications.md.
  */
@@ -40,4 +47,4 @@ export const logConsumer: NotificationConsumer = {
   },
 };
 
-export const CONSUMERS: NotificationConsumer[] = [logConsumer];
+export const CONSUMERS: NotificationConsumer[] = [logConsumer, emailConsumer, pushConsumer];

@@ -25,6 +25,8 @@ const SUITES: Suite[] = [
   // First: no API, no browser, ~1s, and it covers the write path every other
   // suite's notifications now go through.
   { name: "outbox", file: "api/outbox.ts", kind: "api" },
+  { name: "email-delivery", file: "api/email-delivery.ts", kind: "api" },
+  { name: "push-delivery", file: "api/push-delivery.ts", kind: "api" },
   { name: "wishlist", file: "api/wishlist.ts", kind: "api" },
   { name: "reviews", file: "api/reviews.ts", kind: "api" },
   { name: "checkout-bff", file: "api/checkout-bff.ts", kind: "api" },
