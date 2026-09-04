@@ -8,6 +8,10 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "relay": "tsx watch src/relay.ts",
+    "relay:start": "node dist/relay.js",
+    "worker": "tsx watch src/worker.ts",
+    "worker:start": "node dist/worker.js",
     "seed:scale": "tsx prisma/seed-scale.ts",
     "admin:grant": "tsx scripts/grant-admin.ts grant",
     "admin:revoke": "tsx scripts/grant-admin.ts revoke",
@@ -20,6 +24,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
+    "@confluentinc/kafka-javascript": "^1.10.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "@types/nodemailer": "^8.0.1",

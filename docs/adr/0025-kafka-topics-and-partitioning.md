@@ -1,7 +1,10 @@
 # 25. One topic keyed by user, consumer groups as fan-out, retries on delay topics
 
-- **Status:** Proposed — no code implements this yet. See
-  [plan 0001](../plans/0001-multi-channel-notifications.md).
+- **Status:** Accepted, partly implemented 2026-09-04 (plan 0001, phase 1).
+  `lib/kafka.ts` creates all five topics and `lib/notifyTransport.ts` keys
+  every message by `userId`. **The retry ladder is declared and nothing
+  consumes it** — there is no channel that can fail transiently until email
+  lands in phase 2, so the delay topics exist and stay empty.
 - **Recorded:** 2026-09-04
 
 ## Context

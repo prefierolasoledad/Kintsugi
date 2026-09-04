@@ -340,6 +340,54 @@ Enforced in the application layer unless noted:
 | `add_totp_replay_protection` | `users.totpLastUsedAt` |
 | `add_refunds` | `refunds`, `RefundStatus`, `RefundTrigger`, `orders.refundedCents`, `NotificationType.REFUND_ISSUED` |
 | `add_password_reset_tokens` | `password_reset_tokens` |
+| `add_outbox_events` | `outbox_events`, plus a hand-added partial index on the unpublished rows |
+
+### `outbox_events`
+
+Written in the **same transaction** as the `notifications` row it describes, so
+a notification and the event that will deliver it commit together or not at all.
+A relay (`lib/relay.ts`) publishes committed rows and nothing else.
+
+Publishing from `notify()` directly would be a dual write, and no ordering of
+the two survives a crash between them: row first loses the event with nothing
+recording that a publish was owed, publish first emails somebody about a sale
+that then rolled back. See [ADR 0024](../adr/0024-outbox-not-dual-writes.md).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `eventId` | uuid | Unique. **The consumer's dedupe key** — generated once at enqueue and carried unchanged through every republish and redelivery |
+| `aggregateType` / `aggregateId` | text | What the event is about (`order` / an order id). **Not a foreign key** — an event must survive the thing it describes being deleted, same reasoning as `reports.targetId` |
+| `type` | enum | `NotificationType`, the same value as on the notification |
+| `userId` | text | **The partition key.** Denormalised so the relay never joins to find it |
+| `payload` | jsonb | Snapshot of what a channel worker needs: notification id, title, body, link |
+| `createdAt` | timestamp | Publish order |
+| `publishedAt` | timestamp? | Null means unpublished — the relay's entire working set |
+| `attempts` / `lastError` | int / text? | Written after a failed batch, outside the rolled-back transaction, so a broker outage is visible in the table rather than only in a log |
+
+**Invariants**
+
+24. The relay claims with `SELECT … FOR UPDATE SKIP LOCKED`, so N relays divide
+    the backlog rather than publishing it N times.
+25. It publishes and *then* sets `publishedAt`. A crash between the two
+    republishes, which is a duplicate rather than a loss — and duplicates are
+    the downstream problem the delivery ledger will solve
+    ([ADR 0026](../adr/0026-delivery-idempotency.md), not yet built).
+26. Published rows are never pruned yet. This table grows without bound until
+    retention lands in phase 6.
+
+The partial index is added by hand because Prisma cannot express one, the same
+way the `HELD` reservation constraint is:
+
+```sql
+CREATE INDEX "outbox_events_unpublished_idx"
+    ON "outbox_events"("createdAt") WHERE "publishedAt" IS NULL;
+```
+
+Within weeks the published rows outnumber the pending ones by orders of
+magnitude, and the declared composite index would have the planner scanning one
+almost entirely composed of rows the relay's query excludes. This one holds only
+the backlog — single digits on a healthy system.
 
 ```bash
 npx prisma migrate dev --name <name>   # create + apply

@@ -200,10 +200,11 @@ code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-870 assertions across 25 suites.
+890 assertions across 26 suites.
 
 | Suite | Covers |
 |---|---|
+| `outbox` | notification and event commit together or not at all; two relays claim disjoint rows; a failed publish keeps the row |
 | `wishlist` | saving is inert; idempotent under concurrency; cross-user isolation |
 | `reviews` | verified-purchase gate; one review per person; the badge is earned |
 | `checkout-bff` | the proxy path a browser actually takes |

@@ -1,13 +1,19 @@
 # Plan 0001 — Multi-channel notifications on Kafka
 
-- **Status:** Plan. Nothing below is built.
+- **Status:** Phases 0 and 1 landed. Phases 2–6 are not built.
 - **Written:** 2026-09-04
 - **Produces:** ADRs 0024–0027, as each phase lands
 
-> **This is a plan, not a description.** Every other document in `docs/`
-> describes code that exists. This one describes code that does not, which makes
-> it the most dangerous file in the repository — a reader who mistakes it for
+> **This is a plan, not a description.** Most of `docs/` describes code that
+> exists; most of this file still describes code that does not, which makes it
+> the most dangerous document in the repository — a reader who mistakes it for
 > `architecture/lld.md` will go looking for modules that were never written.
+>
+> **What exists as of 2026-09-04:** the outbox table, the relay, the transport
+> seam, one logging consumer, and Kafka in Compose behind the `messaging`
+> profile. There is no email, no push, and no SMS. Nothing has a delivery
+> ledger yet, so nothing deduplicates redeliveries — which is fine only because
+> the sole consumer writes to a log.
 >
 > The rule from [docs/README.md](../README.md) applies with force here: *state
 > what is not built*. As each phase lands, the decisions it settled move into an
@@ -411,7 +417,7 @@ rather than passing quietly when the broker is absent.
 Each phase ships on its own and leaves the system working. No phase depends on a
 later one.
 
-### Phase 0 — Decide, and write it down
+### ~~Phase 0 — Decide, and write it down~~ · landed 2026-09-04
 
 Four ADRs, no code:
 
@@ -428,7 +434,7 @@ and §2, §4, and §5 above are already most of their content.
 
 **Exit:** four records merged, each with its rejected alternatives.
 
-### Phase 1 — Outbox, relay, broker
+### ~~Phase 1 — Outbox, relay, broker~~ · landed 2026-09-04
 
 - `OutboxEvent` model and migration.
 - `lib/outbox.ts` — one function, `enqueue(tx, event)`, taking a transaction
@@ -452,6 +458,22 @@ and §2, §4, and §5 above are already most of their content.
 
 **Exit:** an event provably reaches a consumer exactly once, with the relay
 SIGKILLed mid-batch.
+
+**Met.** `tests/api/outbox.ts` — 28 assertions, no API and no broker, about a
+second. It forces open the three gaps a happy path never reaches: a transaction
+rolled back after both writes leaves neither row; two concurrent relay passes
+over 24 events deliver each exactly once (a plain `SELECT` delivers all 24
+twice); and a publish that throws leaves the row unpublished with the attempt
+and the reason recorded, then recovers on the next pass.
+
+Two answers came out of building it rather than planning it:
+
+- **The Kafka client is `@confluentinc/kafka-javascript`** — open question 2,
+  settled by evidence rather than preference: `kafkajs` last published
+  2023-02-27, the Confluent package a week before this was written.
+- **The relay gets its own process, but only under `kafka`** — open question 4.
+  Under `inline` there is no broker and nothing to scale, so the API runs it
+  in-process and development stays one process.
 
 ### Phase 2 — Email
 

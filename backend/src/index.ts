@@ -11,7 +11,9 @@ import { startOrderSweeper } from "./lib/orders";
 import { assertKycConfigured } from "./lib/kycProvider";
 import { assertProviderConfigured } from "./lib/paymentProvider";
 import { assertMailConfigured } from "./lib/mailer";
+import { assertNotifyConfigured, notifyTransportKind } from "./lib/notifyTransport";
 import { assertRateLimitStore } from "./lib/rateLimit";
+import { startRelay } from "./lib/relay";
 import { startReservationSweeper } from "./lib/reservations";
 import { ordersRouter } from "./routes/orders";
 import { addressesRouter } from "./routes/addresses";
@@ -99,10 +101,12 @@ app.use("/seller", sellerRouter);
 let paymentSummary: string;
 let kycSummary: string;
 let mailSummary: string;
+let notifySummary: string;
 try {
   paymentSummary = assertProviderConfigured();
   kycSummary = assertKycConfigured();
   mailSummary = assertMailConfigured();
+  notifySummary = assertNotifyConfigured();
 } catch (err) {
   console.error(`\nConfiguration error:\n  ${(err as Error).message}\n`);
   process.exit(1);
@@ -113,6 +117,7 @@ app.listen(PORT, () => {
   console.log(`Payments: ${paymentSummary}`);
   console.log(`Identity: ${kycSummary}`);
   console.log(`Email:    ${mailSummary}`);
+  console.log(`Notify:   ${notifySummary}`);
 
   /**
    * Reported after binding, not before.
@@ -153,4 +158,21 @@ app.listen(PORT, () => {
   //   unpaid orders hold stock, and their listing is hidden from the catalog
   //   in-flight payments whose request died need settling against the provider
   startOrderSweeper();
+
+  /**
+   * The outbox relay, but ONLY on the inline transport.
+   *
+   * Under inline there is no broker: the relay hands events straight to the
+   * consumer functions, so a second container for a function call would be
+   * ceremony. Development and the test suite stay one process.
+   *
+   * Under kafka it runs as its own program (src/relay.ts) instead — it is on
+   * the critical path of every notification and has to scale separately from
+   * the API. Starting it here too would mean two relays racing, which is safe
+   * (FOR UPDATE SKIP LOCKED) but means scaling the API silently scales
+   * publishing with it. See docs/adr/0024-outbox-not-dual-writes.md
+   */
+  if (notifyTransportKind() === "inline") {
+    startRelay();
+  }
 });

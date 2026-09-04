@@ -1,24 +1,29 @@
 import { cached, invalidate } from "./cache";
 import { UNREAD_TTL, unreadKey } from "./cacheKeys";
+import { enqueueMany, type EnqueueInput } from "./outbox";
 import { prisma } from "./prisma";
 import { NotificationType } from "../generated/prisma/enums";
 
 /**
  * Telling people what happened to them.
  *
- * IN-APP ONLY, AND HONEST ABOUT IT
- * Email delivery exists now (lib/mailer.ts), and nothing here uses it. Mailing
- * every sale, shipment, and moderation decision needs per-type preferences and
- * an unsubscribe path first — without those it is the reason someone filters
- * this domain to spam, and then they stop seeing the ones that matter. This
- * table remains the source of truth, so adding mail later means reading from
- * here rather than replacing it. Nothing below assumes a delivery channel.
+ * THIS TABLE IS THE RECORD; DELIVERY IS SOMETHING ELSE
+ * Every emit writes a notification row AND an outbox row, in one transaction.
+ * The row is what the app reads and remains the source of truth. The outbox row
+ * is what a relay publishes so that email, push, and SMS workers can deliver it
+ * — see docs/adr/0024-outbox-not-dual-writes.md for why the two writes cannot
+ * be separated, in either order.
+ *
+ * Preferences govern delivery, never the record: a user who turns off every
+ * channel still gets the notification here. That is what keeps this table
+ * answerable about what happened, independently of who was told how.
  *
  * TEXT IS WRITTEN AT CREATION, NOT RENDERED LATER
  * Same reasoning as OrderItem's snapshots. "Cast iron skillet sold" has to keep
  * saying that after the listing is renamed, repriced, or deleted — and a
  * notification that re-derives its own text from live rows would break entirely
  * once the row is gone. The `link` may rot into a 404; the sentence never does.
+ * The outbox payload carries the same snapshot, for the same reason.
  *
  * NEVER THROWS INTO THE CALLER
  * A notification is a side effect of something more important. Failing to tell
@@ -32,46 +37,76 @@ type EmitInput = {
   title: string;
   body?: string | null;
   link?: string | null;
+
+  /**
+   * What this notification is about, for the event envelope.
+   *
+   * Optional, and defaults to the notification itself. Supplying something more
+   * specific — an order, a listing — is what lets a consumer group its work or
+   * a support query trace every message sent about one order. Not a foreign
+   * key: an event must survive the thing it describes being deleted.
+   */
+  aggregateType?: string;
+  aggregateId?: string;
 };
 
 /**
- * Records one notification. Deliberately swallows its own errors.
+ * Records one notification and the event that will deliver it, atomically.
+ * Deliberately swallows its own errors.
  *
  * Callers are payment, fulfilment, and moderation paths — places where an
  * exception would undo work that actually matters.
  */
 export async function notify(input: EmitInput): Promise<void> {
-  try {
-    await prisma.notification.create({
-      data: {
-        userId: input.userId,
-        type: input.type,
-        title: input.title,
-        body: input.body ?? null,
-        link: input.link ?? null,
-      },
-    });
-    await invalidate(unreadKey(input.userId));
-  } catch (err) {
-    console.error(`Failed to notify ${input.userId} (${input.type})`, err);
-  }
+  return notifyMany([input]);
 }
 
-/** Several at once, for an order that spans sellers. */
+/**
+ * Several at once, for an order that spans sellers.
+ *
+ * `createManyAndReturn` rather than `createMany`, because the outbox payload
+ * carries the notification id and there is no way to learn it otherwise. One
+ * extra round trip, inside the transaction that was already open.
+ */
 export async function notifyMany(inputs: EmitInput[]): Promise<void> {
   if (inputs.length === 0) return;
   try {
-    await prisma.notification.createMany({
-      data: inputs.map((i) => ({
-        userId: i.userId,
-        type: i.type,
-        title: i.title,
-        body: i.body ?? null,
-        link: i.link ?? null,
-      })),
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.notification.createManyAndReturn({
+        data: inputs.map((i) => ({
+          userId: i.userId,
+          type: i.type,
+          title: i.title,
+          body: i.body ?? null,
+          link: i.link ?? null,
+        })),
+        select: { id: true, userId: true, type: true, title: true, body: true, link: true },
+      });
+
+      /**
+       * Zipped by index. `createManyAndReturn` preserves input order on
+       * PostgreSQL, which is what makes the aggregate on `inputs[n]` line up
+       * with the row at `created[n]`.
+       */
+      const events: EnqueueInput[] = created.map((row, n) => ({
+        type: row.type,
+        userId: row.userId,
+        aggregateType: inputs[n]?.aggregateType ?? "notification",
+        aggregateId: inputs[n]?.aggregateId ?? row.id,
+        payload: {
+          notificationId: row.id,
+          title: row.title,
+          body: row.body,
+          link: row.link,
+        },
+      }));
+
+      await enqueueMany(tx, events);
     });
+
     // One basket can notify several sellers, so every recipient's badge is
-    // stale, not just one.
+    // stale, not just one. Outside the transaction: a cache invalidation that
+    // fails must not roll back the notification it was invalidating for.
     await invalidate(...new Set(inputs.map((i) => unreadKey(i.userId))));
   } catch (err) {
     console.error(`Failed to notify ${inputs.length} recipient(s)`, err);
@@ -218,6 +253,10 @@ export const events = {
       title: `${input.itemTitle} is on its way`,
       body: tracking ?? "The seller has posted it.",
       link: `/orders/${input.orderId}`,
+      // Scoped to the order, so every message sent about one purchase can be
+      // traced together afterwards.
+      aggregateType: "order",
+      aggregateId: input.orderId,
     });
   },
 
@@ -257,6 +296,8 @@ export const events = {
         ? `${input.reason} You've been refunded for it.`
         : `${input.reason} We couldn't complete your refund automatically — it's been logged and someone will settle it.`,
       link: `/orders/${input.orderId}`,
+      aggregateType: "order",
+      aggregateId: input.orderId,
     });
   },
 
@@ -289,6 +330,8 @@ export const events = {
       // generates a support message on day two.
       body: `${input.reason} It can take a few days to appear on your statement.`,
       link: `/orders/${input.orderId}`,
+      aggregateType: "order",
+      aggregateId: input.orderId,
     });
   },
 

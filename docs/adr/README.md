@@ -40,16 +40,16 @@ the old one, rather than an edit.
 | [0021](0021-refresh-race-grace-window.md) | Concurrent refresh handled by a grace window in Postgres, not a Redis lock | Accepted |
 | [0022](0022-object-storage-for-uploads.md) | Object storage for uploads; the last thing blocking a second replica | Accepted |
 | [0023](0023-one-dockerfile-many-targets.md) | One Dockerfile with a target per image; the all-in-one was built and removed | Accepted |
-| [0024](0024-outbox-not-dual-writes.md) | Transactional outbox, not dual writes | Proposed |
-| [0025](0025-kafka-topics-and-partitioning.md) | One topic keyed by user, consumer groups as fan-out, retries on delay topics | Proposed |
+| [0024](0024-outbox-not-dual-writes.md) | Transactional outbox, not dual writes | Accepted |
+| [0025](0025-kafka-topics-and-partitioning.md) | One topic keyed by user, consumer groups as fan-out, retries on delay topics | Accepted |
 | [0026](0026-delivery-idempotency.md) | A delivery ledger, claimed before the provider is called | Proposed |
 | [0027](0027-notification-consent-and-preferences.md) | Consent before delivery: verified numbers, per-type preferences, unsubscribe | Proposed |
 
 > **Proposed** means the decision is made and argued but **no code implements
-> it**. 0024–0027 are the four decisions behind
-> [plan 0001](../plans/0001-multi-channel-notifications.md); each moves to
-> Accepted as its phase lands. A reader looking for the modules they describe
-> will not find them.
+> it**. 0026 and 0027 are still in that state — a reader looking for a delivery
+> ledger or a preferences table will not find one. 0024 and 0025 landed with
+> phase 1 of [plan 0001](../plans/0001-multi-channel-notifications.md); each
+> record says what of it exists.
 
 ## Adding one
 

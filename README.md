@@ -11,8 +11,8 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
-> verification, email, and an admin dashboard all work — covered by **870
-> assertions across 25 suites** (`npm test`), run against the real stack rather
+> verification, email, and an admin dashboard all work — covered by **890
+> assertions across 26 suites** (`npm test`), run against the real stack rather
 > than mocks. Payments and identity run against Stripe's test mode: no real
 > money moves, no real document is checked. Payouts to sellers are the one
 > significant feature not built. See [What's built](#whats-built).
@@ -100,7 +100,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**870 assertions across 25 suites**, and they drive the actual stack — a real
+**890 assertions across 26 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -231,7 +231,7 @@ Kintsugi/
 │   │   ├── middleware/ requireAuth, requireSeller, requireAdmin
 │   │   └── routes/     15 routers — auth, catalog, seller, orders,
 │   │                   reservations, admin, webhooks, and the rest
-│   └── tests/          22 suites: api/, browser/, and shared fixtures
+│   └── tests/          26 suites: api/, browser/, and shared fixtures
 ├── frontend/           Next.js storefront
 │   └── src/
 │       ├── app/        Routes, including BFF handlers under app/api/*

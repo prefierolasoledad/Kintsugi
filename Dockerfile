@@ -4,6 +4,8 @@
 #
 #   docker build --target api       .   the Express API
 #   docker build --target web       .   the Next storefront (which is the BFF)
+#   docker build --target relay     .   the outbox relay (api image, other CMD)
+#   docker build --target worker    .   notification channel workers (likewise)
 #   docker build --target api-build .   migrations and seeding (has the CLI)
 #
 # docker-compose.yml selects these with `target:`; the Kubernetes manifests use
@@ -117,7 +119,7 @@ RUN npm ci --omit=dev \
       node_modules/scheduler \
       node_modules/effect \
       node_modules/elkjs \
- && node -e "require('@prisma/adapter-pg'); require('sharp'); console.log('runtime deps still resolve after prune')"
+ && node -e "require('@prisma/adapter-pg'); require('sharp'); require('@confluentinc/kafka-javascript'); console.log('runtime deps still resolve after prune')"
 
 
 # ==================================================================
@@ -181,6 +183,37 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
 # problem worth not having, and a one-shot job maps directly onto a Kubernetes
 # Job.
 CMD ["node", "dist/index.js"]
+
+
+# ==================================================================
+# Targets: relay, worker
+#
+# Both are the api image with a different entrypoint. `FROM api` rather than a
+# repeat of the COPY stanzas above, because they run the same compiled tree from
+# the same node_modules — duplicating the copies would be three places for the
+# prune list to drift apart again, which is the whole reason this file exists.
+#
+# They are SEPARATE TARGETS and not flags on the api container because they
+# scale on different axes and fail independently: publishing throughput is not
+# request throughput, and a stalled SMS worker must not take checkout with it.
+# Each maps onto its own Kubernetes Deployment. See ADR 0024.
+#
+# HEALTHCHECK NONE, honestly: neither serves HTTP, so the inherited /health poll
+# would fail forever and report a working process as unhealthy. A real liveness
+# signal for these is consumer lag at /health/lag, which is phase 6 work.
+# `EXPOSE 4000` is inherited and meaningless here; Docker has no way to unset it.
+# ==================================================================
+FROM api AS relay
+HEALTHCHECK NONE
+CMD ["node", "dist/relay.js"]
+
+
+# Takes an optional consumer group as its argument — `dist/worker.js log-worker`
+# runs one group, no argument runs all of them. One per container is what lets
+# email and SMS scale separately, which is most of why a broker is here.
+FROM api AS worker
+HEALTHCHECK NONE
+CMD ["node", "dist/worker.js"]
 
 
 # ==================================================================

@@ -1,7 +1,8 @@
 # 24. Transactional outbox, not dual writes
 
-- **Status:** Proposed — no code implements this yet. See
-  [plan 0001](../plans/0001-multi-channel-notifications.md).
+- **Status:** Accepted — implemented 2026-09-04 (plan 0001, phase 1).
+  `prisma/schema.prisma` (`OutboxEvent`), `lib/outbox.ts`, `lib/relay.ts`,
+  `src/relay.ts`. Covered by `tests/api/outbox.ts`.
 - **Recorded:** 2026-09-04
 
 ## Context
@@ -106,6 +107,18 @@ grows. Coupling it to the API means scaling the API to scale publishing, and a
 relay bug taking down checkout with it. It gets its own Dockerfile target per
 [ADR 0023](0023-one-dockerfile-many-targets.md), which is also what makes it a
 Kubernetes Deployment later rather than a rewrite.
+
+> **Qualified in implementation.** This turned out to be true only under
+> `NOTIFY_TRANSPORT=kafka`. Under `inline` — the default, and what the suite and
+> CI run — there is no broker to publish to and therefore nothing to scale, so
+> the API starts the relay in-process and development stays a single process. A
+> second container for a function call would be ceremony.
+>
+> The reasoning above is unchanged for the transport it was written about: the
+> two are mutually exclusive, and running both at once would mean the API
+> quietly draining the outbox into its own consumers while the relay container
+> finds an empty table. That is the one misconfiguration in this design with a
+> silent symptom, and it is called out in `docker-compose.yml`.
 
 ### Polling, not change data capture
 
