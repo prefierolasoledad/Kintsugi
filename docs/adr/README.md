@@ -42,14 +42,15 @@ the old one, rather than an edit.
 | [0023](0023-one-dockerfile-many-targets.md) | One Dockerfile with a target per image; the all-in-one was built and removed | Accepted |
 | [0024](0024-outbox-not-dual-writes.md) | Transactional outbox, not dual writes | Accepted |
 | [0025](0025-kafka-topics-and-partitioning.md) | One topic keyed by user, consumer groups as fan-out, retries on delay topics | Accepted |
-| [0026](0026-delivery-idempotency.md) | A delivery ledger, claimed before the provider is called | Proposed |
-| [0027](0027-notification-consent-and-preferences.md) | Consent before delivery: verified numbers, per-type preferences, unsubscribe | Proposed |
+| [0026](0026-delivery-idempotency.md) | A delivery ledger, claimed before the provider is called | Accepted |
+| [0027](0027-notification-consent-and-preferences.md) | Consent before delivery: verified numbers, per-type preferences, unsubscribe | Accepted |
+| [0028](0028-sms-provider-twilio-behind-a-seam.md) | Twilio for SMS, behind the same seam as payments and identity | Accepted |
 
 > **Proposed** means the decision is made and argued but **no code implements
-> it**. 0026 and 0027 are still in that state — a reader looking for a delivery
-> ledger or a preferences table will not find one. 0024 and 0025 landed with
-> phase 1 of [plan 0001](../plans/0001-multi-channel-notifications.md); each
-> record says what of it exists.
+> it**. Nothing in this table is in that state any more: 0024 and 0025 landed
+> with phase 1 of [plan 0001](../plans/0001-multi-channel-notifications.md),
+> 0026 and 0027 with phases 2-4, and 0028 with phase 4. Each record says what of
+> it exists — including, in 0028, the two things that do not yet.
 
 ## Adding one
 

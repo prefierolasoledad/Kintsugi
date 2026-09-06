@@ -7,12 +7,14 @@ import { authRouter } from "./routes/auth";
 import { catalogRouter } from "./routes/catalog";
 import { sellerRouter } from "./routes/seller";
 import { profileRouter } from "./routes/profile";
+import { startDeferredSweeper } from "./lib/deferredDeliveries";
 import { startOrderSweeper } from "./lib/orders";
 import { assertKycConfigured } from "./lib/kycProvider";
 import { assertProviderConfigured } from "./lib/paymentProvider";
 import { assertMailConfigured } from "./lib/mailer";
 import { assertNotifyConfigured, notifyTransportKind } from "./lib/notifyTransport";
 import { assertPushConfigured } from "./lib/push";
+import { assertSmsConfigured } from "./lib/smsProvider";
 import { assertRateLimitStore } from "./lib/rateLimit";
 import { startRelay } from "./lib/relay";
 import { startReservationSweeper } from "./lib/reservations";
@@ -103,11 +105,13 @@ let paymentSummary: string;
 let kycSummary: string;
 let mailSummary: string;
 let notifySummary: string;
+let smsSummary: string;
 try {
   paymentSummary = assertProviderConfigured();
   kycSummary = assertKycConfigured();
   mailSummary = assertMailConfigured();
   notifySummary = assertNotifyConfigured();
+  smsSummary = assertSmsConfigured();
 } catch (err) {
   console.error(`\nConfiguration error:\n  ${(err as Error).message}\n`);
   process.exit(1);
@@ -119,6 +123,7 @@ app.listen(PORT, () => {
   console.log(`Identity: ${kycSummary}`);
   console.log(`Email:    ${mailSummary}`);
   console.log(`Notify:   ${notifySummary}`);
+  console.log(`SMS:      ${smsSummary}`);
   // Not fatal, same policy as Redis and object storage: an unconfigured push
   // channel is a missing feature, not a broken server. Printed loudly so
   // nobody has to guess why nothing arrives.
@@ -163,6 +168,16 @@ app.listen(PORT, () => {
   //   unpaid orders hold stock, and their listing is hidden from the catalog
   //   in-flight payments whose request died need settling against the provider
   startOrderSweeper();
+
+  /**
+   * And a third, for the same reason: a message parked by quiet hours is owed
+   * to somebody and nothing in the request path will ever go looking for it.
+   *
+   * Runs on every API replica. That is safe rather than wasteful — the claim
+   * is a conditional UPDATE on the row, so N sweepers divide the work instead
+   * of sending it N times, exactly as N relays divide the outbox.
+   */
+  startDeferredSweeper();
 
   /**
    * The outbox relay, but ONLY on the inline transport.

@@ -397,18 +397,32 @@ Consumers are plain `async (event) => …` functions under both, so `inline`
 exercises preference resolution, the idempotency guard, template rendering, and
 the provider seams for real. Only the transport is absent.
 
-What only a broker can demonstrate goes in one suite, gated on `KAFKA_BROKERS`
-the way `ratelimit` and `cache` are gated on `REDIS_URL`:
+One caveat found the hard way: `inline` only stays broker-free if the Kafka
+client is never *loaded*. It is a native addon, so a top-level import of it
+pulls librdkafka into the process the moment anything reads a topic name — and
+a `node_modules` built for another platform then fails the whole application at
+`require`, on the transport whose entire purpose is needing no broker. The
+import in `lib/kafka.ts` is therefore type-only, and the runtime `require` sits
+inside `kafka()`, reached only by code about to talk to a broker.
 
+What only a broker can demonstrate lives in `tests/api/retry-ladder.ts`, gated
+on `KAFKA_BROKERS` the way `ratelimit` and `cache` are gated on `REDIS_URL`:
+
+- a failed message is republished onto the right rung, keyed by `userId` so a
+  retry cannot overtake a later notification for the same person, and carrying
+  the attempt count, the target group, and why it failed — **covered**
+- a message that exhausts the ladder arrives in the DLQ with that history —
+  **covered**
+- a rung's message is not processed before its delay elapses — **still owed**;
+  needs a running worker, not only a broker
 - an offset is committed only **after** the ledger row is written, so a consumer
-  killed between the two redelivers and deduplicates rather than losing the send
-- a consumer group rebalances without duplicate delivery
-- each rung of the retry ladder fires on a transient failure, and a permanent
-  failure skips the ladder entirely
-- a message that exhausts the ladder arrives in the DLQ with its failure history
+  killed between the two redelivers and deduplicates rather than losing the
+  send — **still owed**, same reason
+- a consumer group rebalances without duplicate delivery — **still owed**
 
 Following the precedent in `tests/README.md`, the gated sections **skip loudly**
-rather than passing quietly when the broker is absent.
+rather than passing quietly when the broker is absent, and the skip names the
+claims that went unproven rather than merely saying it was skipped.
 
 ---
 
@@ -475,7 +489,7 @@ Two answers came out of building it rather than planning it:
   Under `inline` there is no broker and nothing to scale, so the API runs it
   in-process and development stays one process.
 
-### Phase 2 — Email
+### ~~Phase 2 — Email~~ · landed 2026-09-04
 
 - `NotificationDelivery` and `NotificationPreference` models.
 - Preference resolution: explicit row, else the §6 default.
@@ -489,7 +503,14 @@ Two answers came out of building it rather than planning it:
 goes out, reading from the notification table rather than replacing it, with the
 preferences and unsubscribe path that were the actual blocker all along.
 
-### Phase 3 — Web Push
+**Met.** `tests/api/email-delivery.ts` — 26 assertions. The ledger claim is
+exercised under redelivery rather than assumed: the same event delivered twice
+produces one send and one `duplicate`, a channel the recipient turned off lands
+as `SUPPRESSED` with a reason rather than vanishing, and an unverified address
+fails rather than suppressing, because suppression would claim the recipient
+chose it.
+
+### ~~Phase 3 — Web Push~~ · landed 2026-09-04
 
 Web Push over FCM/APNs because there is no mobile app: no store, no native
 build, and it works in the browser that is already open.
@@ -504,7 +525,61 @@ build, and it works in the browser that is already open.
 **Exit:** one notification reaches two devices signed in as the same user, and a
 revoked subscription cleans itself up.
 
-### Phase 4 — SMS
+**Met.** `tests/api/push-delivery.ts` — 20 assertions. A user with two
+subscriptions gets one delivery row and two device sends; a `410 Gone` deletes
+the subscription rather than retrying it; and a user with no devices records
+`SUPPRESSED`, not `FAILED`, because having never granted permission is the
+ordinary state of most accounts and painting the ledger red for it would make
+the ledger useless for spotting the real failures.
+
+### ~~Phase 3a — The retry ladder, wired~~ · landed 2026-09-06
+
+Not a planned phase. §4 and ADR 0025 argued the ladder as part of phase 1, and
+phase 1 shipped the topics without it — `RETRY_LADDER` was an exported constant
+that nothing imported, the worker subscribed to the main topic alone, and a
+transient failure was therefore terminal. A provider having a bad minute lost
+the notification outright, which is the failure the ladder exists to prevent
+and the one the design claimed was handled.
+
+What closing it actually needed, beyond the republish itself:
+
+- **A failure has to be classified before it can be routed.** `deliver()` now
+  returns `retry` or `failed`, and `PermanentFailure` is what a channel throws
+  to mean "this will be refused again for the same reason". Anything not
+  wrapped is transient, because the costs are asymmetric — an unnecessary retry
+  wastes one send, a missing one loses the notification.
+- **The idempotency guard had to learn one exception.** The unique constraint
+  that makes redelivery safe (ADR 0026) makes a retry look *identical* to a
+  duplicate, so without a deliberate reclaim the ladder would have run three
+  rungs and delivered nothing, silently. `claim({ reclaim: true })` — passed
+  only by the ladder, never on the main topic — takes over a row that is
+  `FAILED` and nothing else, by conditional update, so two workers racing the
+  same retry produce one send.
+- **The delay is a pause, not a sleep.** Awaiting inside the handler holds the
+  poll loop; hold it past `max.poll.interval.ms` — five minutes, against a 15m
+  rung — and the broker evicts the consumer and the group rebalances forever.
+  The partition is paused and the offset sought back instead, so the consumer
+  keeps its membership and only that one partition stops.
+- **Retries are tagged with the group they are for.** Every group subscribes to
+  every rung, so without the tag an email failure would be reprocessed by the
+  push worker. The ledger would refuse it, but the work and the noise are
+  avoidable for the cost of one header.
+
+**Exit:** a transient failure climbs the ladder and a permanent one does not,
+with no send duplicated on the way.
+
+**Met, in part.** `tests/api/retry-ladder.ts` — 38 assertions with no broker,
+covering the routing table, the header parsing, and every case reclaim must
+refuse: a `SENT` row, a `PENDING` row that belongs to a live attempt, a
+`SUPPRESSED` row, and two workers racing the same retry. A broker-gated section
+asserts what goes onto the wire.
+
+**Still owed, and skipping loudly until it exists:** the two claims that need a
+running worker rather than only a broker — that a rung's message is not
+processed before its delay elapses, and that an offset is committed only after
+the ledger row is settled.
+
+### ~~Phase 4 — SMS~~ · landed 2026-09-06
 
 - `phone`, `phoneVerifiedAt`, `smsConsentAt` on `User`; `PhoneVerification`.
 - E.164 normalisation on input; a code sent and verified before the number is
@@ -517,6 +592,64 @@ revoked subscription cleans itself up.
 
 **Exit:** SMS to verified numbers only, never outside quiet hours, never twice
 for one event, and never at all in CI.
+
+**Met.** `tests/api/sms-delivery.ts` — 55 assertions, against
+`SMS_PROVIDER=stub`, so the whole path runs and only the carrier is absent.
+E.164 normalisation including the cases it must reject; a code that is
+single-use, expiring, and attempt-capped — past the cap even the *correct* code
+is refused; one number cannot be verified on two accounts; an account with no
+number records `SUPPRESSED` with a reason rather than `FAILED`, and withdrawn
+consent records a *different* reason; a redelivery sends no second text; the
+daily cap holds; and the quiet-hours window is asserted across midnight, which
+is where the obvious implementation is wrong in a way that looks configured and
+does nothing.
+
+Also asserted, because it is the trap [ADR 0027](../adr/0027-notification-consent-and-preferences.md)
+exists to close: **saving an address leaves `User.phone` untouched.**
+
+The provider decision is [ADR 0028](../adr/0028-sms-provider-twilio-behind-a-seam.md)
+— Twilio, over its REST API rather than the SDK, chosen over SNS on opt-out
+handling and error taxonomy rather than on price.
+
+**One thing this did NOT deliver, against the §6 commitment above:**
+
+- **Quiet hours use the server's timezone, not the recipient's.** There is no
+  `timezone` column on `User`. A user in Sydney is currently quiet during the
+  server's night rather than their own. Closing it is a column captured at
+  signup, and the window arithmetic already takes a zone — it is simply given
+  the server's.
+
+### ~~Phase 4a — Quiet hours defer instead of dropping~~ · landed 2026-09-06
+
+Phase 4 shipped quiet hours as a *suppression*, which is a drop wearing a
+better name, and §6 says defer. The argument for letting it stand was that both
+SMS-default events also go by email and push — true today, and not a property
+anyone should have to keep true for the SMS path to be correct.
+
+- `DeliveryStatus.DEFERRED` and `notification_deliveries.notBefore`. A parked
+  message is a distinct state from a suppressed one, because SUPPRESSED is
+  terminal and the whole point is that this message is still owed.
+- `lib/deferredDeliveries.ts` — a sweeper, shaped like `startReservationSweeper`
+  and `startOrderSweeper`, claiming with a conditional `UPDATE` so N API
+  replicas divide the work rather than sending it N times.
+- **Not a fourth rung on the retry ladder.** A rung waits by pausing its
+  partition, and an eight-hour pause holds that partition open all night for
+  everything behind it. The ladder is built for minutes.
+- **The text is read back from `notifications`, not snapshotted onto the
+  delivery row.** That table is the source of truth; a copy would be a second
+  version of the same sentence, free to drift.
+- A maximum age, default 24h. A refund text two days late re-alarms somebody
+  about something already resolved — past the cap it settles `SUPPRESSED` with
+  a reason rather than arriving unexplained.
+
+**Exit:** a message parked at 3am is sent when the window opens, once, by
+exactly one replica.
+
+**Met.** Sections 9-9d of `tests/api/sms-delivery.ts`: `opensAt` is the moment
+the window closes *including when that is tomorrow*; a row not yet due is left
+alone; once due it is sent and `notBefore` cleared, and a second pass finds
+nothing; two sweepers racing one parked message produce exactly one send; and a
+message parked past the cap is dropped with a reason rather than sent late.
 
 ### Phase 5 — Prove the scaling claim
 
@@ -591,8 +724,11 @@ should be built that assumes one.
 2. **Kafka client.** `@confluentinc/kafka-javascript` (librdkafka-based,
    officially supported, KafkaJS-compatible API) over `kafkajs`. Verify current
    maintenance status before committing — this landscape moves.
-3. **SMS provider.** Twilio (best DX, highest cost), AWS SNS (cheapest, worst
-   DX), or stub-only with the seam in place and a real provider deferred.
+3. ~~**SMS provider.**~~ **Answered: Twilio**, over its REST API rather than the
+   SDK, with `stub` remaining the default so CI never sends and never needs a
+   secret. Decided on opt-out handling and error taxonomy rather than on price —
+   SNS is cheaper and loses on both. Recorded as
+   [ADR 0028](../adr/0028-sms-provider-twilio-behind-a-seam.md).
 4. **Does the relay live in the API process or its own?** Its own is proposed
    above, for independent scaling and a separate failure domain. In-process
    would match the existing sweepers and add no container. The tradeoff is real

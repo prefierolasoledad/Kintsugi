@@ -1,4 +1,23 @@
-import { KafkaJS } from "@confluentinc/kafka-javascript";
+/**
+ * TYPE-ONLY, AND DELIBERATELY SO — the runtime import is in kafka() below.
+ *
+ * @confluentinc/kafka-javascript is a native addon: importing it at module
+ * scope dlopens librdkafka the moment anything in this file is touched. This
+ * file also exports TOPICS and RETRY_LADDER, which are plain data that the
+ * inline transport, the outbox, and several tests all read — so a top-level
+ * import made the ENTIRE application, on the transport that exists precisely
+ * so no broker is needed, refuse to start unless a platform-specific binary
+ * was present and loadable.
+ *
+ * That is not hypothetical. A node_modules installed on one platform and used
+ * on another gives `ERR_DLOPEN_FAILED` from `require`, and the failure lands
+ * nowhere near Kafka: the API will not boot with NOTIFY_TRANSPORT=inline, and
+ * `npm test` cannot collect a suite that only wanted a topic name.
+ *
+ * A type import is erased at compile time, so this costs nothing and the
+ * binary is loaded only by code that is actually about to talk to a broker.
+ */
+import type { KafkaJS } from "@confluentinc/kafka-javascript";
 
 /**
  * Kafka client, topic names, and topic creation.
@@ -77,7 +96,16 @@ export function kafka(clientId: string): KafkaJS.Kafka {
         "KAFKA_BROKERS is not set. Set it, or run with NOTIFY_TRANSPORT=inline."
       );
     }
-    client = new KafkaJS.Kafka({ kafkaJS: { brokers: list, clientId } });
+
+    /**
+     * Loaded here rather than at the top of the file, so that the native addon
+     * is required only once something genuinely needs a broker. See the note on
+     * the type import above for what a module-scope import breaks.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const rt = require("@confluentinc/kafka-javascript") as typeof import("@confluentinc/kafka-javascript");
+
+    client = new rt.KafkaJS.Kafka({ kafkaJS: { brokers: list, clientId } });
   }
   return client;
 }

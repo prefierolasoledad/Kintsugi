@@ -25,6 +25,15 @@ import {
   vapidPublicKey,
 } from "../lib/push";
 import { prisma } from "../lib/prisma";
+import { checkRateLimit } from "../lib/rateLimit";
+import { InvalidPhoneNumber, maskPhone } from "../lib/phone";
+import { isStubSms } from "../lib/smsProvider";
+import {
+  PhoneAlreadyInUse,
+  issueAndSendCode,
+  removePhone,
+  verifyCode,
+} from "../lib/smsVerification";
 import { DeliveryChannel, NotificationType } from "../generated/prisma/enums";
 
 export const notificationsRouter = Router();
@@ -219,6 +228,144 @@ notificationsRouter.post("/push/unsubscribe", async (req, res) => {
     res.json({ removed });
   } catch (err) {
     fail(res, err, "Could not turn off notifications on this device.");
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Phone, for SMS
+ * ------------------------------------------------------------------ */
+
+/**
+ * BOTH ENDPOINTS ARE RATE-LIMITED, AND THEY GUARD DIFFERENT THINGS.
+ *
+ * Send: an unlimited send endpoint is a way to make this platform pay to text
+ * an arbitrary number as often as somebody likes — a billing attack against us
+ * and a harassment vector against them, in one request.
+ *
+ * Verify: an unlimited verify endpoint is a six-digit oracle. A million codes
+ * sounds like a lot until it is divided by a request rate. The per-code attempt
+ * counter caps guesses against ONE code and this caps how fast fresh codes can
+ * be tried, which is the same pairing that protects `admin-stepup`
+ * (ADR 0018).
+ */
+notificationsRouter.get("/phone", async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { phone: true, phoneVerifiedAt: true, smsConsentAt: true },
+    });
+
+    res.json({
+      // Masked, never whole. This response is rendered in a browser, ends up in
+      // screenshots on support tickets, and the owner only needs to recognise
+      // which number it is.
+      phone: user?.phone ? maskPhone(user.phone) : null,
+      verified: !!user?.phoneVerifiedAt,
+      consentedAt: user?.smsConsentAt ?? null,
+      smsAvailable: true,
+    });
+  } catch (err) {
+    fail(res, err, "Could not load your phone settings.");
+  }
+});
+
+const phoneStart = z.object({ phone: z.string().min(1).max(32) });
+
+notificationsRouter.post("/phone/start", async (req, res) => {
+  try {
+    const parsed = phoneStart.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Check the request.", code: "INVALID_INPUT" });
+    }
+
+    /**
+     * Three an hour. Enough for a mistyped number and a genuine retry, and
+     * nowhere near enough to be worth using as a way to spend our money.
+     */
+    const limit = await checkRateLimit(`phone-verify-send:${req.userId}`, 3, 60 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({
+        error: "Too many codes requested. Try again later.",
+        code: "RATE_LIMITED",
+        retryAfterSeconds: limit.retryAfterSeconds,
+      });
+    }
+
+    const result = await issueAndSendCode(req.userId!, parsed.data.phone);
+
+    res.status(201).json({
+      phone: maskPhone(result.phone),
+      expiresAt: result.expiresAt,
+      /**
+       * Only under the stub provider, and it is what lets the suite and a local
+       * developer finish the flow without a handset. Under twilio this is null
+       * — returning a live code to a client would make the whole verification
+       * decorative.
+       */
+      devCode: isStubSms() ? result.devCode : null,
+    });
+  } catch (err) {
+    if (err instanceof InvalidPhoneNumber) {
+      return res.status(400).json({ error: err.message, code: "INVALID_PHONE" });
+    }
+    if (err instanceof PhoneAlreadyInUse) {
+      return res.status(409).json({ error: err.message, code: "PHONE_IN_USE" });
+    }
+    fail(res, err, "Could not send a verification code.");
+  }
+});
+
+const phoneVerify = z.object({ code: z.string().min(4).max(10) });
+
+notificationsRouter.post("/phone/verify", async (req, res) => {
+  try {
+    const parsed = phoneVerify.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Check the request.", code: "INVALID_INPUT" });
+    }
+
+    const limit = await checkRateLimit(`phone-verify-check:${req.userId}`, 8, 15 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({
+        error: "Too many attempts. Try again later.",
+        code: "RATE_LIMITED",
+        retryAfterSeconds: limit.retryAfterSeconds,
+      });
+    }
+
+    const outcome = await verifyCode(req.userId!, parsed.data.code);
+
+    if (!outcome.ok) {
+      /**
+       * One status and one message for every wrong-code case.
+       *
+       * Distinguishing "expired" from "wrong" from "too many attempts" would
+       * tell someone guessing exactly which of their assumptions was wrong,
+       * and the honest-user benefit is small — the fix is the same in all
+       * three: ask for a new code.
+       */
+      const status = outcome.reason === "taken" ? 409 : 400;
+      const message =
+        outcome.reason === "taken"
+          ? "That number is already verified on another account."
+          : "That code is not valid. Ask for a new one.";
+      return res.status(status).json({ error: message, code: "INVALID_CODE" });
+    }
+
+    res.json({ phone: maskPhone(outcome.phone), verified: true });
+  } catch (err) {
+    fail(res, err, "Could not verify that code.");
+  }
+});
+
+notificationsRouter.delete("/phone", async (req, res) => {
+  try {
+    await removePhone(req.userId!);
+    // Removing a number that was never there is a success, for the same reason
+    // unsubscribing twice is: it is the state the caller asked for.
+    res.json({ removed: true });
+  } catch (err) {
+    fail(res, err, "Could not remove your phone number.");
   }
 });
 

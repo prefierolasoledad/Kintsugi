@@ -1,6 +1,9 @@
+import type { DeliveryOutcome } from "./deliveryLedger";
+import type { DeliveryChannel } from "../generated/prisma/enums";
 import type { NotificationEvent } from "./outbox";
 import { emailConsumer } from "./consumers/email";
 import { pushConsumer } from "./consumers/push";
+import { smsConsumer } from "./consumers/sms";
 
 /**
  * The channel consumers.
@@ -11,12 +14,12 @@ import { pushConsumer } from "./consumers/push";
  * code on both paths, so the suite exercises the real handler and only the
  * broker is absent.
  *
- * WHAT IS HERE, AND WHAT IS NOT
- * Email (phase 2) and push (phase 3) are real. SMS is phase 4 and is NOT
- * stubbed here — there is no `smsConsumer` returning early, because a stub that
- * silently does nothing is indistinguishable from a channel that is broken.
- * When it lands it appears in this list; until then the honest state is that it
- * does not exist.
+ * WHAT IS HERE
+ * Email (phase 2), push (phase 3), and SMS (phase 4) are all real. SMS still
+ * defaults to a stub PROVIDER — `SMS_PROVIDER=stub` — which is a different
+ * thing from a stub consumer: the whole path runs, preferences are resolved,
+ * the ledger is claimed and settled, and only the carrier is absent. That is
+ * what lets CI exercise SMS without a secret and without billing anyone.
  *
  * EVERY CONSUMER GOES THROUGH deliveryLedger.deliver(). That is what resolves
  * preferences, claims the delivery, and settles the outcome — and it is the
@@ -26,10 +29,41 @@ import { pushConsumer } from "./consumers/push";
  * See docs/plans/0001-multi-channel-notifications.md.
  */
 
+/**
+ * Passed down from the worker, and the only thing that differs between a
+ * message off the main topic and the same message off a retry topic.
+ */
+export type HandleOptions = {
+  /**
+   * This is a retry of a delivery this pipeline already attempted, so the
+   * consumer may take over its own earlier FAILED ledger row. Never set on the
+   * main topic — see deliveryLedger.claim().
+   */
+  reclaim?: boolean;
+};
+
 export type NotificationConsumer = {
   /** Becomes the Kafka consumer group id. Stable — changing it replays. */
   readonly group: string;
-  handle(event: NotificationEvent): Promise<void>;
+  /**
+   * The ledger channel this consumer settles, when it settles one.
+   *
+   * Optional because the log consumer delivers nothing. Where it is set, a
+   * message on its way to the dead-letter queue can be annotated with the
+   * actual provider error off the ledger row, instead of arriving with only
+   * "it failed" — which is the difference between a DLQ somebody can triage
+   * and one they have to go database-spelunking behind.
+   */
+  readonly channel?: DeliveryChannel;
+  /**
+   * Returns what happened, so the worker can decide whether to put the message
+   * back on the ladder. A consumer with nothing to report — the log consumer —
+   * returns void, which the worker reads as "no delivery, nothing to retry".
+   */
+  handle(
+    event: NotificationEvent,
+    opts?: HandleOptions
+  ): Promise<DeliveryOutcome | void>;
 };
 
 /**
@@ -47,4 +81,9 @@ export const logConsumer: NotificationConsumer = {
   },
 };
 
-export const CONSUMERS: NotificationConsumer[] = [logConsumer, emailConsumer, pushConsumer];
+export const CONSUMERS: NotificationConsumer[] = [
+  logConsumer,
+  emailConsumer,
+  pushConsumer,
+  smsConsumer,
+];

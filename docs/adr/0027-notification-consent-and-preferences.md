@@ -1,7 +1,9 @@
 # 27. Consent before delivery: verified numbers, per-type preferences, unsubscribe
 
-- **Status:** Proposed — no code implements this yet. See
-  [plan 0001](../plans/0001-multi-channel-notifications.md).
+- **Status:** Accepted — implemented in phases 2-4 of
+  [plan 0001](../plans/0001-multi-channel-notifications.md). Preferences and
+  unsubscribe landed with email; `phone`, `phoneVerifiedAt`, `smsConsentAt` and
+  `PhoneVerification` landed with SMS.
 - **Recorded:** 2026-09-04
 
 ## Context

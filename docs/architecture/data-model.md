@@ -37,7 +37,17 @@ The account. One row per person, whether they buy, sell, or both.
 | `isSeller` | bool | Capability flag, not an account type |
 | `emailVerified` | bool | Login is blocked until true |
 | `avatarUrl` | text? | Public URL of the stored avatar. **The image lives in object storage, never here.** Null falls back to generated initials |
+| `phone` | text? | Unique. E.164 only. **Never populated from `addresses.phone`** — see below |
+| `phoneVerifiedAt` | timestamp? | **The gate.** Nothing is ever sent to a number whose value here is null |
+| `smsConsentAt` | timestamp? | Separate from verification: proving a number works is not agreeing to be messaged on it, and it is the consent that has to be produced if anyone asks |
 | `createdAt` / `updatedAt` | timestamp | |
+
+`phone` is unique, and that is a trade rather than an obvious win. It buys the
+property that one number cannot verify unlimited accounts — a verified phone is
+only an identity signal if it is scarce. It costs the case where a number held
+by a suspended account cannot be reused by its owner elsewhere, which is a
+support ticket rather than a security hole. Postgres permits many NULLs in a
+unique index, so accounts without a number are unaffected.
 
 ### `refresh_tokens`
 
@@ -341,6 +351,10 @@ Enforced in the application layer unless noted:
 | `add_refunds` | `refunds`, `RefundStatus`, `RefundTrigger`, `orders.refundedCents`, `NotificationType.REFUND_ISSUED` |
 | `add_password_reset_tokens` | `password_reset_tokens` |
 | `add_outbox_events` | `outbox_events`, plus a hand-added partial index on the unpublished rows |
+| `add_notification_delivery` | `notification_deliveries`, `notification_preferences`, `DeliveryChannel`, `DeliveryStatus` |
+| `add_push_subscriptions` | `push_subscriptions` |
+| `add_phone_and_sms_verification` | `users.phone` / `phoneVerifiedAt` / `smsConsentAt`, `phone_verifications` |
+| `defer_sms_in_quiet_hours` | `DeliveryStatus.DEFERRED`, `notification_deliveries.notBefore` and its index |
 
 ### `outbox_events`
 
@@ -371,8 +385,9 @@ that then rolled back. See [ADR 0024](../adr/0024-outbox-not-dual-writes.md).
     the backlog rather than publishing it N times.
 25. It publishes and *then* sets `publishedAt`. A crash between the two
     republishes, which is a duplicate rather than a loss — and duplicates are
-    the downstream problem the delivery ledger will solve
-    ([ADR 0026](../adr/0026-delivery-idempotency.md), not yet built).
+    the downstream problem the delivery ledger solves
+    ([ADR 0026](../adr/0026-delivery-idempotency.md); `notification_deliveries`,
+    claimed before the provider is called).
 26. Published rows are never pruned yet. This table grows without bound until
     retention lands in phase 6.
 
@@ -397,6 +412,42 @@ npx prisma studio                      # browse data
 
 > `migrate dev` does not reliably regenerate the client in this setup. If a new
 > column or enum is missing from types at runtime, run `prisma generate`.
+
+### `phone_verifications`
+
+A six-digit code, sent to a number to prove whoever holds the account holds the
+phone. Mirrors `email_verification_tokens` — hashed, single-use, expiring — with
+the differences six digits force.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `userId` | text | FK, cascade |
+| `phone` | text | **The number being verified lives here, not on `users`, until the code comes back** |
+| `codeHash` | text | SHA-256. A code readable from a database dump is a code usable from one |
+| `attempts` | int | Wrong guesses against *this* code. Past the cap the row is spent |
+| `createdAt` / `expiresAt` / `usedAt` | timestamp | Ten-minute TTL |
+
+**Invariants**
+
+27. The number is held on this row until the code is accepted. Writing it to
+    `users.phone` at request time would put an unverified number in the column
+    that governs delivery, one bug away from being texted.
+28. Ten minutes, against twenty-four hours for an email link. An email link
+    needs the inbox; a code sits on a lock screen where anyone holding the
+    handset can read it.
+29. `attempts` caps guessing against one code and the rate limiter caps how fast
+    fresh codes can be requested. **Both are needed** — a six-digit code is one
+    of a million, which is a few thousand tries, and either control alone leaves
+    a way through. Same pairing as `admin-stepup`.
+30. Issuing a code marks every earlier unused one spent. Three live codes would
+    triple the chance a guess lands.
+31. **Nothing backfills from `addresses.phone`.** That column is a delivery
+    contact for a parcel — unverified, and frequently a third party's number
+    (a gift, a workplace reception, a relative's landline). Copying it here
+    would launder an unverified number into a verified one and text somebody
+    who never consented and cannot unsubscribe.
+    See [ADR 0027](../adr/0027-notification-consent-and-preferences.md).
 
 ## Seed
 

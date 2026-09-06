@@ -33,6 +33,21 @@ being asserted on:
 REDIS_URL=redis://localhost:6379 npm run dev     # and again for npm test
 ```
 
+**Kafka is optional and one suite is gated on it, the same way.** The pipeline
+defaults to `NOTIFY_TRANSPORT=inline`, which hands events straight to the same
+consumer functions in-process — so everything except the wire is under test
+without a broker, and a fork's pull request needs no Kafka to go green. What a
+broker alone can show is the tail of `retry-ladder`:
+
+```bash
+docker compose --profile messaging up -d
+KAFKA_BROKERS=localhost:9092 npm test -- retry-ladder
+```
+
+Without it that section **skips loudly and names what went unproven**, rather
+than passing quietly. A section that reports green for something nobody ran is
+worse than no section, because it is believed.
+
 The runner checks the rest before starting and prints one clear sentence if
 something is missing, rather than producing forty confusing failures. That
 matters — a stopped API once looked like a frontend bug for several minutes.

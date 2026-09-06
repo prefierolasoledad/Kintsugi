@@ -1,7 +1,9 @@
 # 26. A delivery ledger, claimed before the provider is called
 
-- **Status:** Proposed — no code implements this yet. See
+- **Status:** Accepted — implemented in phases 2-4 of
   [plan 0001](../plans/0001-multi-channel-notifications.md).
+  `NotificationDelivery` and `lib/deliveryLedger.ts` are the ledger; the
+  `@@unique([eventId, channel])` constraint is the guard.
 - **Recorded:** 2026-09-04
 
 ## Context

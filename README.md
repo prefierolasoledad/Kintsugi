@@ -11,9 +11,9 @@ a Next.js storefront, an Express API, and PostgreSQL.
 
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
-> verification, email, and an admin dashboard all work — covered by **890
-> assertions across 26 suites** (`npm test`), run against the real stack rather
-> than mocks. Payments and identity run against Stripe's test mode: no real
+> verification, email, web push, SMS, and an admin dashboard all work — covered by
+> **1,049 assertions across 30 suites** (`npm test`), run against the real stack
+> rather than mocks. Payments and identity run against Stripe's test mode: no real
 > money moves, no real document is checked. Payouts to sellers are the one
 > significant feature not built. See [What's built](#whats-built).
 
@@ -32,6 +32,9 @@ a Next.js storefront, an Express API, and PostgreSQL.
 | Payments | Stripe PaymentIntents + Refunds, behind a provider seam with a stub |
 | Identity | Stripe Identity, behind the same kind of seam |
 | Email | Nodemailer — console, Ethereal, or real SMTP |
+| Notifications | Transactional outbox → Kafka (KRaft) → per-channel workers, behind an `inline`/`kafka` transport seam |
+| Web push | VAPID / Web Push, with a service worker in the storefront |
+| SMS | Twilio REST API, behind a provider seam with a stub |
 | Images | Sharp (re-encode + metadata stripping) |
 | Uploads | S3-compatible object storage (MinIO locally), or local disk |
 | Backups | WAL archiving + base backups to object storage, PITR, a rehearsed restore |
@@ -100,7 +103,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**890 assertions across 26 suites**, and they drive the actual stack — a real
+**1,049 assertions across 30 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -231,7 +234,7 @@ Kintsugi/
 │   │   ├── middleware/ requireAuth, requireSeller, requireAdmin
 │   │   └── routes/     15 routers — auth, catalog, seller, orders,
 │   │                   reservations, admin, webhooks, and the rest
-│   └── tests/          26 suites: api/, browser/, and shared fixtures
+│   └── tests/          30 suites: api/, browser/, and shared fixtures
 ├── frontend/           Next.js storefront
 │   └── src/
 │       ├── app/        Routes, including BFF handlers under app/api/*
@@ -276,6 +279,36 @@ never learns the backend's address. See
   refunds from the admin panel
 - Over-refund protection as an atomic conditional `UPDATE`, and settlement by
   webhook with signature verification ([ADR 0016](docs/adr/0016-refunds-claim-then-refund.md))
+
+**Notifications**
+
+- In-app notifications, email, and web push, from one event per occurrence
+- The event and the notification are written in **one transaction** and
+  published by a separate relay, so a crash between the two leaves work visibly
+  unfinished rather than silently lost
+  ([ADR 0024](docs/adr/0024-outbox-not-dual-writes.md))
+- Kafka fans one event out to per-channel consumer groups, keyed by `userId` so
+  a person's notifications keep their order
+  ([ADR 0025](docs/adr/0025-kafka-topics-and-partitioning.md))
+- A delivery ledger claimed before the provider is called, so a redelivery —
+  ordinary under Kafka — is not a second email
+  ([ADR 0026](docs/adr/0026-delivery-idempotency.md))
+- Per-type, per-channel preferences and one-click unsubscribe
+  ([ADR 0027](docs/adr/0027-notification-consent-and-preferences.md))
+- SMS to **verified numbers only** — a hashed, expiring, attempt-capped code
+  proves the phone before anything is sent to it, and `Address.phone` is never
+  reused because it is frequently a third party's number
+  ([ADR 0028](docs/adr/0028-sms-provider-twilio-behind-a-seam.md))
+- A per-user daily SMS cap and a quiet-hours window — circuit breakers against
+  bugs, not preferences, both recording a reason rather than dropping silently
+- Quiet hours **defer rather than drop**: a message caught at 3am is parked on
+  the ledger and sent by a sweeper when the window opens, once, by exactly one
+  replica
+- Transient failures climb a 5s → 1m → 15m retry ladder of delay topics and
+  land in a DLQ; permanent ones never retry
+- **Runs with no broker by default.** `NOTIFY_TRANSPORT=inline` hands events
+  straight to the same consumer functions in-process, so CI and fork pull
+  requests need no Kafka
 
 **Operations**
 

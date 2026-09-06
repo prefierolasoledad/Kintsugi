@@ -13,9 +13,10 @@ import { DeliveryChannel } from "../../generated/prisma/enums";
  */
 export const pushConsumer: NotificationConsumer = {
   group: "push-worker",
+  channel: DeliveryChannel.PUSH,
 
-  async handle(event) {
-    await deliver(event, DeliveryChannel.PUSH, async () => {
+  async handle(event, opts) {
+    return deliver(event, DeliveryChannel.PUSH, async () => {
       /**
        * SUPPRESSED, NOT FAILED. Without keys nobody can subscribe, so this is
        * "there is no push channel here" rather than "push broke". Recording it
@@ -50,6 +51,6 @@ export const pushConsumer: NotificationConsumer = {
        * reference that cannot be looked up anywhere is worse than none.
        */
       return { providerMessageId: null };
-    });
+    }, opts);
   },
 };

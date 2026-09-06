@@ -1,4 +1,4 @@
-import { deliver } from "../deliveryLedger";
+import { PermanentFailure, deliver } from "../deliveryLedger";
 import { sendNotificationEmail } from "../mailer";
 import { prisma } from "../prisma";
 import { unsubscribeHeaders, unsubscribeUrl } from "../unsubscribe";
@@ -49,9 +49,10 @@ function actionLabel(link: string | null): string {
 
 export const emailConsumer: NotificationConsumer = {
   group: "email-worker",
+  channel: DeliveryChannel.EMAIL,
 
-  async handle(event) {
-    await deliver(event, DeliveryChannel.EMAIL, async () => {
+  async handle(event, opts) {
+    return deliver(event, DeliveryChannel.EMAIL, async () => {
       /**
        * Read at send time, not carried in the event.
        *
@@ -66,8 +67,8 @@ export const emailConsumer: NotificationConsumer = {
       });
 
       if (!user) {
-        // Permanent. The account is gone; nothing to retry against.
-        throw new Error(`no such user ${event.userId}`);
+        // The account is gone. No amount of retrying grows one back.
+        throw new PermanentFailure(`no such user ${event.userId}`);
       }
 
       /**
@@ -82,7 +83,13 @@ export const emailConsumer: NotificationConsumer = {
        * recipient chose this", and they did not.
        */
       if (!user.emailVerified) {
-        throw new Error(`email not verified for ${event.userId}`);
+        /**
+         * Permanent for THIS event. Verification is a user action, not
+         * something that resolves on its own within fifteen minutes, so the
+         * ladder would burn three rungs to reach the same answer. If they
+         * verify later, later notifications go out normally.
+         */
+        throw new PermanentFailure(`email not verified for ${event.userId}`);
       }
 
       const token = {
@@ -102,6 +109,6 @@ export const emailConsumer: NotificationConsumer = {
       });
 
       return { providerMessageId: result.messageId };
-    });
+    }, opts);
   },
 };

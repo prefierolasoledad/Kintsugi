@@ -203,10 +203,10 @@ model User {
   /// stay exactly where they are. Deleting a bad actor would also delete the
   /// evidence, and would orphan the orders of people who bought from them in
   /// good faith.
-  suspendedAt        DateTime?
+  suspendedAt     DateTime?
   /// Shown to them at the login screen. Vague suspensions are indistinguishable
   /// from bugs, and generate support instead of preventing it.
-  suspendedReason    String?
+  suspendedReason String?
 
   /// TOTP, for admins only.
   ///
@@ -221,10 +221,10 @@ model User {
   /// recomputing it, so there is no hashed form that would still work. That is
   /// a real limitation of TOTP, and the mitigation is that it is only ever set
   /// for admin accounts, of which there should be very few.
-  totpSecret         String?
+  totpSecret      String?
   /// Null until a code has been entered correctly. An enrolment that was
   /// started but never confirmed must not be treated as a second factor.
-  totpConfirmedAt    DateTime?
+  totpConfirmedAt DateTime?
   /// REPLAY PROTECTION: the start of the 30-second period whose code was last
   /// accepted.
   ///
@@ -237,16 +237,46 @@ model User {
   /// Any code from this period or earlier is refused, which makes each code
   /// single-use. Stored as the period start rather than the moment of use so
   /// the comparison is exact: two codes from the same period are the same code.
-  totpLastUsedAt     DateTime?
+  totpLastUsedAt  DateTime?
 
-  orders             Order[]
-  wishlist           WishlistItem[]
-  addresses          Address[]
-  notifications      Notification[]
-  notificationPrefs  NotificationPreference[]
-  pushSubscriptions  PushSubscription[]
-  reportsMade        Report[]                 @relation("ReportsMade")
-  moderationActions  ModerationAction[]       @relation("ModeratorActions")
+  /// SMS CONTACT. Three columns, because "we have a number" and "we are
+  /// allowed to text it" are different facts and conflating them is how an
+  /// unverified number gets messaged.
+  ///
+  /// E.164, always — "+447700900123". Normalised on the way in so a number
+  /// typed four different ways is one row, and so the provider is never handed
+  /// something it has to guess about.
+  ///
+  /// UNIQUE, and this is a judgement call with a real cost. A verified phone
+  /// is an identity signal, and one number verifying unlimited accounts
+  /// destroys it — that is the abuse this prevents. The cost is that a number
+  /// held by a suspended account cannot be reused by its owner elsewhere,
+  /// which is a support ticket rather than a security hole. Postgres allows
+  /// many NULLs in a unique column, so accounts without a number are
+  /// unaffected.
+  ///
+  /// NEVER POPULATED FROM Address.phone. That field is a delivery contact for
+  /// a parcel, unverified, and frequently a third party's number — see
+  /// docs/adr/0027-notification-consent-and-preferences.md
+  phone              String?             @unique
+  /// Null until a code sent to that number came back. Nothing is EVER sent to
+  /// a number whose value here is null; the column is the gate.
+  phoneVerifiedAt    DateTime?
+  /// When they agreed to be texted, recorded separately from verification
+  /// because proving a number works is not the same as agreeing to receive
+  /// messages on it — and it is the consent, not the verification, that has to
+  /// be produced if anyone asks.
+  smsConsentAt       DateTime?
+  phoneVerifications PhoneVerification[]
+
+  orders            Order[]
+  wishlist          WishlistItem[]
+  addresses         Address[]
+  notifications     Notification[]
+  notificationPrefs NotificationPreference[]
+  pushSubscriptions PushSubscription[]
+  reportsMade       Report[]                 @relation("ReportsMade")
+  moderationActions ModerationAction[]       @relation("ModeratorActions")
 
   @@index([role])
   @@map("users")
@@ -374,6 +404,12 @@ enum DeliveryStatus {
   SENT
   FAILED
   SUPPRESSED
+  /// Not sent yet, and not a failure: quiet hours. The row carries notBefore
+  /// and a sweeper picks it up once that passes. Distinct from SUPPRESSED
+  /// because SUPPRESSED is terminal — collapsing the two would mean the only
+  /// honest thing to tell somebody at 8am is that their notification was
+  /// dropped at 3am.
+  DEFERRED
 }
 
 /// Which channels actually delivered one event, and what the provider said.
@@ -411,10 +447,19 @@ model NotificationDelivery {
   /// what it said.
   providerMessageId String?
 
-  attempts      Int     @default(0)
-  lastError     String?
-  /// Why nothing was sent. Only set when status is SUPPRESSED.
+  attempts       Int     @default(0)
+  lastError      String?
+  /// Why nothing was sent. Set when status is SUPPRESSED, and also when
+  /// DEFERRED — in that case it names the window that is holding it.
   suppressReason String?
+
+  /// The earliest this may be sent. Only set when status is DEFERRED.
+  ///
+  /// A timestamp rather than a flag, because the sweeper's whole query is
+  /// "what is due now". A flag would make it "what is deferred, then work out
+  /// which of those are due" — a scan that grows with everything ever
+  /// deferred rather than with what is actually owed.
+  notBefore DateTime?
 
   createdAt   DateTime  @default(now())
   completedAt DateTime?
@@ -423,7 +468,50 @@ model NotificationDelivery {
   @@unique([eventId, channel])
   @@index([userId, createdAt])
   @@index([status, createdAt])
+  /// The sweeper's query, and the only reason it does not scan the table.
+  @@index([status, notBefore])
   @@map("notification_deliveries")
+}
+
+/// A code sent to a phone, to prove whoever holds the account holds the number.
+///
+/// MIRRORS EmailVerificationToken DELIBERATELY — hashed, single-use, expiring —
+/// with three differences, each forced by the fact that this is six digits and
+/// not 32 random bytes.
+///
+/// SHORTER EXPIRY. An email link needs an inbox to reach. An SMS code appears
+/// on a lock screen, readable by anyone holding the handset, so it lives for
+/// minutes rather than a day.
+///
+/// AN ATTEMPT COUNTER. A 32-byte token cannot be guessed; a six-digit code is
+/// one of a million, and a few thousand tries would find it. The counter caps
+/// the guesses against ONE code, and the rate limiter caps how fast codes can
+/// be requested — both are needed, because either alone leaves a way through.
+///
+/// THE NUMBER LIVES HERE, NOT ON User, UNTIL IT IS PROVEN. Writing the number
+/// to User at request time would mean an unverified number sitting in the field
+/// that governs delivery, one bug away from being texted.
+model PhoneVerification {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The E.164 number this code was sent to, held here until it is proven.
+  phone    String
+  /// SHA-256, like every other token in this schema. A code readable from a
+  /// database dump is a code that can be used from one.
+  codeHash String
+
+  /// Wrong guesses against THIS code. Past the cap the row is spent, so
+  /// guessing costs a fresh code and therefore a fresh rate-limit slot.
+  attempts Int @default(0)
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  @@index([userId, createdAt])
+  @@map("phone_verifications")
 }
 
 /// An explicit opt-in or opt-out, per event type per channel.
@@ -490,7 +578,7 @@ model PushSubscription {
   /// differently per browser string is a bug waiting to happen.
   userAgent String?
 
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
   /// Touched on every successful send, so a device list can show what is live.
   lastSeenAt DateTime @default(now())
 
@@ -504,9 +592,9 @@ model PushSubscription {
 /// survive the thing it reported being removed — which is frequently the whole
 /// point of the report — and three nullable FKs would be worse than one id.
 model Report {
-  id         String           @id @default(uuid())
+  id         String @id @default(uuid())
   reporterId String
-  reporter   User             @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
+  reporter   User   @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
 
   targetType ReportTargetType
   targetId   String
@@ -535,9 +623,9 @@ model Report {
 /// decision to remove someone's listing or suspend their account has to be
 /// explainable afterwards, including when it was wrong.
 model ModerationAction {
-  id          String               @id @default(uuid())
+  id          String @id @default(uuid())
   moderatorId String
-  moderator   User                 @relation("ModeratorActions", fields: [moderatorId], references: [id], onDelete: Cascade)
+  moderator   User   @relation("ModeratorActions", fields: [moderatorId], references: [id], onDelete: Cascade)
 
   action     ModerationActionType
   targetType ReportTargetType
@@ -676,9 +764,9 @@ model SellerProfile {
   /// items unverified, but money cannot move to you until identity clears.
   payoutsEnabled Boolean @default(false)
 
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  listings  Listing[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  listings    Listing[]
   kycAttempts KycAttempt[]
   sales       OrderItem[]
 
@@ -694,16 +782,16 @@ model SellerProfile {
 /// never any part of the document: no image, no document number, no date of
 /// birth. Those pass through memory and are discarded.
 model KycAttempt {
-  id                String        @id @default(uuid())
+  id                String             @id @default(uuid())
   sellerProfileId   String
-  sellerProfile     SellerProfile @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
+  sellerProfile     SellerProfile      @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
   provider          String
-  providerSessionId String        @unique
+  providerSessionId String             @unique
   status            VerificationStatus @default(PENDING)
   documentType      String?
   country           String?
   rejectionReason   String?
-  createdAt         DateTime      @default(now())
+  createdAt         DateTime           @default(now())
   completedAt       DateTime?
 
   @@index([sellerProfileId])
@@ -878,7 +966,7 @@ model Order {
   /// fields: the provider holds anything sensitive.
   /// See docs/adr/0013-payment-provider-seam.md
   paymentProvider String?
-  paymentIntentId String? @unique
+  paymentIntentId String?   @unique
   paidAt          DateTime?
   failureReason   String?
 
@@ -895,7 +983,7 @@ model Order {
   /// expected state — a basket can span sellers, and one seller failing to send
   /// does not undo the others. status only becomes REFUNDED once the whole
   /// subtotal has gone back.
-  refundedCents   Int       @default(0)
+  refundedCents Int @default(0)
 
   /// WHERE THIS WAS SENT — a snapshot, not a relation.
   ///
