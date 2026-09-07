@@ -1,25 +1,35 @@
 # Plan 0001 — Multi-channel notifications on Kafka
 
-- **Status:** Phases 0 and 1 landed. Phases 2–6 are not built.
+- **Status:** **Every phase has landed**, plus three that were not planned —
+  3a, 4a and 6a. Completed 2026-09-07.
 - **Written:** 2026-09-04
-- **Produces:** ADRs 0024–0027, as each phase lands
+- **Produces:** ADRs 0024–0028
 
-> **This is a plan, not a description.** Most of `docs/` describes code that
-> exists; most of this file still describes code that does not, which makes it
-> the most dangerous document in the repository — a reader who mistakes it for
-> `architecture/lld.md` will go looking for modules that were never written.
+> **This was a plan, and it is now a record.** When it was written, most of this
+> file described code that did not exist. All of it exists now: the outbox and
+> relay, the retry ladder, email, web push, SMS on Twilio, quiet-hours deferral,
+> the measurements, and the operational surface.
 >
-> **What exists as of 2026-09-04:** the outbox table, the relay, the transport
-> seam, one logging consumer, and Kafka in Compose behind the `messaging`
-> profile. There is no email, no push, and no SMS. Nothing has a delivery
-> ledger yet, so nothing deduplicates redeliveries — which is fine only because
-> the sole consumer writes to a log.
+> **The header rule said this file gets deleted when the last phase lands.**
+> It is being kept, and the reason is the three unplanned phases. Each one
+> exists because a phase was declared done while something it had argued for was
+> missing:
 >
-> The rule from [docs/README.md](../README.md) applies with force here: *state
-> what is not built*. As each phase lands, the decisions it settled move into an
-> ADR and the phase is struck through below. When the last phase lands this file
-> is deleted, because a plan that outlives its execution becomes a description of
-> a system nobody built.
+> - **3a** — the retry ladder was designed in phase 1 and never wired.
+>   `RETRY_LADDER` was an exported constant nothing imported.
+> - **4a** — quiet hours shipped as a drop, not a deferral, which is what §6
+>   had committed to.
+> - **6a** — the stale-`PENDING` sweeper ADR 0026 specified went unbuilt through
+>   four phases, and was only forced into the open by a demo script that had to
+>   be taught a `PENDING` row is a loss and not a delivery.
+>
+> Deleting the file would delete that pattern along with it. The ADRs carry the
+> decisions; this carries the record of what got missed and how, which is the
+> part a future plan can actually learn from.
+>
+> Where a section has been overtaken by what was measured — §4's partition
+> ceiling, §6's quiet-hours timezone — the correction sits next to the original
+> claim rather than replacing it.
 
 ---
 
@@ -167,13 +177,20 @@ rest none; `SALE_MADE` alone would be a hot partition while eight others idle.
 And per-user ordering is destroyed, because one person's events are now spread
 across every partition by type.
 
-**12 partitions is the ceiling on consumers per group.** A group cannot usefully
+**12 partitions is the ceiling on consumers doing main-topic work.** A group cannot usefully
 run more consumers than partitions — the extras idle. Raising the count later
 rehashes keys, which breaks per-user ordering during the migration, so it is set
 deliberately above current need.
 
 `replication.factor` and `min.insync.replicas` come from environment, not from a
 literal: 1 and 1 on a single-broker Compose stack, 3 and 2 anywhere real.
+
+Stated more carefully than it was originally: once the retry ladder landed every
+worker subscribes to the main topic *and* all three rungs, so a group has
+12 + 6 + 6 + 6 = 30 partitions to distribute and can hold 30 members before
+anyone is wholly idle. Past 12, though, a member holds no main-topic partition
+and does nothing for the main flow. Measured in phase 5: at 15 consumers the
+broker assigned main-topic partitions to 12 and nothing to 3.
 
 ### The retry ladder, and why retries are not in-process
 
@@ -413,12 +430,21 @@ on `KAFKA_BROKERS` the way `ratelimit` and `cache` are gated on `REDIS_URL`:
   the attempt count, the target group, and why it failed — **covered**
 - a message that exhausts the ladder arrives in the DLQ with that history —
   **covered**
-- a rung's message is not processed before its delay elapses — **still owed**;
-  needs a running worker, not only a broker
 - an offset is committed only **after** the ledger row is written, so a consumer
   killed between the two redelivers and deduplicates rather than losing the
-  send — **still owed**, same reason
-- a consumer group rebalances without duplicate delivery — **still owed**
+  send — **covered**, by `scripts/consumer-failure-demo.ts`: SIGKILL with 2,215
+  of 3,000 events outstanding, 0 lost
+- a consumer group rebalances without duplicate delivery — **covered**, same
+  run: the survivors finished the dead consumer's partitions, 0 duplicates
+- a rung's message is not processed before its delay elapses — **partly**. A
+  message replayed onto the 5s rung was observed arriving after the delay and
+  not before, but that is an observation from the DLQ tool rather than an
+  assertion in a suite
+- a consumer killed *between* claiming a delivery and settling it leaves a
+  `PENDING` row nothing will ever retry — **covered**, by phase 6a. The
+  per-channel sweeper ADR 0026 specifies now exists, and
+  `tests/api/operations.ts` asserts email is resent, SMS is not, and two
+  sweepers racing one row resolve it exactly once
 
 Following the precedent in `tests/README.md`, the gated sections **skip loudly**
 rather than passing quietly when the broker is absent, and the skip names the
@@ -651,7 +677,7 @@ alone; once due it is sent and `notBefore` cleared, and a second pass finds
 nothing; two sweepers racing one parked message produce exactly one send; and a
 message parked past the cap is dropped with a reason rather than sent late.
 
-### Phase 5 — Prove the scaling claim
+### ~~Phase 5 — Prove the scaling claim~~ · landed 2026-09-07
 
 This repository does not assert performance, it measures it — `cache-demo.ts`
 counts Postgres's own `xact_commit` rather than trusting an app-side counter,
@@ -669,7 +695,59 @@ holding. Kafka is being introduced *for* scale, so the same standard applies.
 **Exit:** numbers in the README, in the existing style, including the ones that
 are unflattering.
 
-### Phase 6 — Operations
+**Met, and the numbers are worse than this section assumed.** All three scripts
+exist and have run against a real single-broker KRaft cluster.
+
+`notification-throughput-demo.ts` — 10k events, 500 recipients, the real email
+consumer group, at 1/3/6/12/15 consumers:
+
+| Consumers | p50 | p95 | Events/sec | Main-topic partitions assigned |
+| --- | --- | --- | --- | --- |
+| 1 | 56.3s | 88.3s | 109 | 1/1 |
+| 3 | 47.8s | 71.1s | 136 | 3/3 |
+| 6 | 38.0s | 54.5s | 174 | 6/6 |
+| 12 | 33.8s | 50.0s | 189 | 12/12 |
+| 15 | 33.1s | 52.6s | 170 | **12/15** |
+
+- **The flattening this section predicted is there, and it arrives earlier than
+  12.** Twelve times the consumers buys 1.7x the throughput. Measured on 4 CPUs
+  with a process per consumer, so part of that is contention rather than design
+  — which is why the ceiling is proven from the *assignment* column instead.
+- **The partition ceiling is measured, not inferred.** At 15 consumers the
+  broker gave main-topic partitions to 12 and nothing to 3, and throughput
+  *fell* from 189 to 170. The number comes from asking the broker which member
+  owns which partition, because a slow machine produces an identical curve for
+  a completely different reason.
+- **The broker is not the bottleneck, and that is the finding that matters.**
+  The relay publishes at 3,400-4,600/sec while consumers drain at 109-189/sec —
+  a gap of more than twenty times. What is slow is the per-event database work
+  inside the consumer. So the *throughput* half of §2's case for Kafka is its
+  weakest half, and §9's admission that "at this traffic a table and a worker
+  would do" is now measured rather than conceded. Fan-out, failure isolation,
+  and replay are what earn it.
+
+`consumer-failure-demo.ts` — SIGKILL with 2,215 of 3,000 events outstanding:
+**0 duplicates, 0 lost, 0 stuck PENDING**, all 3,000 delivered exactly once. It
+also prints what it did not prove — nothing was killed inside the claim-to-settle
+window, so the ambiguous middle of
+[ADR 0026](../adr/0026-delivery-idempotency.md) remains untested and its
+per-channel sweeper remains unbuilt.
+
+`dlq-replay.ts` — an operator tool, report-only unless given `--commit`.
+Replays to the **5s rung rather than the main topic**, and that is the one
+non-obvious thing in it: a DLQ entry already has a `FAILED` ledger row, the main
+topic is consumed with the strict claim, so a replay there collides with its own
+row and is dropped while the logs show success. Verified end to end — replayed,
+picked up one rung later, `SENT` with `attempts=2`.
+
+**One correction to §4 that this phase forced.** "12 partitions is the ceiling
+on consumers per group" is too loose. Since the ladder landed, every worker
+subscribes to the main topic *and* all three rungs, so the group has 30
+partitions to hand out and can hold 30 members before anyone is wholly idle.
+What is true is narrower: past 12, a consumer holds no *main-topic* partition
+and contributes nothing to the throughput above, however busy it looks.
+
+### ~~Phase 6 — Operations~~ · landed 2026-09-07
 
 - Consumer lag at `/health/lag`; an alert on DLQ depth.
 - The delivery ledger surfaced in the admin panel — "did the buyer actually get
@@ -678,6 +756,83 @@ are unflattering.
   without bound.
 
 **Exit:** a moderator can answer a delivery question without a database console.
+
+**Met.** `/admin/deliveries` — search by email address or name, because that is
+what a support conversation actually starts with; eventId too, for whoever is
+holding a DLQ entry. Filters by channel and status, counts the whole filtered
+set rather than the page, and every row carries **why**: `suppressReason` for a
+channel the recipient turned off, `lastError` for a provider that refused,
+`notBefore` for something quiet hours parked. An answer of "FAILED" with no
+reason sends the reader straight back to the database.
+
+Two deliberate omissions: no message body — the ledger records that something
+was sent, not what it said (ADR 0026) — and `SUPPRESSED` is styled neutral
+rather than red, because it is the recipient's choice or a policy working, and
+colouring it as a fault would make the page look like an incident every time
+somebody turns off review emails.
+
+`GET /health/lag` — per-group lag, per-topic breakdown, DLQ depth, and the
+thresholds themselves so a monitor need not encode them. 503 when unhealthy, so
+nothing has to parse a body to know. It reports **all four rungs**, not just the
+main topic: a group stalled on `retry.15m` is a real failure that main-topic lag
+shows as zero.
+
+- **It does not alert, and says so.** There is no alerting stack here, and
+  pretending otherwise would be worse than the gap — the same line
+  [ADR 0020](../adr/0020-replication-and-backups.md) draws around a Postgres
+  standby with no orchestrator.
+- **Unreachable is unhealthy.** A health check that returns 200 because it
+  could not determine anything is worse than one that fails: the monitor goes
+  green and the person on call hears it from a customer.
+
+**Two bugs this phase produced, both found by running it:**
+
+- **The first version reported zero lag while nothing was consuming** — the
+  exact failure the endpoint exists to prevent. It iterated the group's
+  committed offsets, and `fetchOffsets` returns an *empty array* for a group
+  that has never run, not a list of -1s. It now derives lag from the topic's
+  partition list and counts a never-committed partition's whole retained
+  backlog, with `uncommitted` exposed separately so "never started" stays
+  distinguishable from "fallen behind".
+- **The thresholds were captured at module load**, so the unhealthy branch
+  could not be tested — the same mistake as the SMS daily cap two phases
+  earlier. Read per call now, and `tests/api/operations.ts` asserts the 503
+  path actually fires.
+
+### ~~Phase 6a — The ambiguous middle, closed~~ · landed 2026-09-07
+
+Not a planned item. [ADR 0026](../adr/0026-delivery-idempotency.md) specified a
+per-channel sweeper for stale `PENDING` rows and it went unbuilt through four
+phases. `scripts/consumer-failure-demo.ts` is what made it undeniable: its first
+version counted a `PENDING` row as a delivery, and had to be taught that a row
+claimed and never settled is a notification **lost behind something that looks
+like proof it was sent**.
+
+`lib/stalePending.ts` resolves them on the policy the ADR already chose, and the
+policies differ because the cost of guessing wrong differs:
+
+- **Email and push are resent.** A duplicate is an annoyance; a missing refund
+  notice is not. Push reuses the original `eventId` as its collapse tag, so if
+  the first attempt did land the device replaces it rather than showing two.
+- **SMS is never resent.** It settles `FAILED` and is flagged for a human,
+  because a duplicate text costs real money and reads to the recipient exactly
+  like a phishing retry — which they cannot distinguish from the real thing.
+
+The SMS branch returns *before* anything is sent, so the decision not to resend
+cannot depend on a later branch being reached. Claiming is a conditional
+`UPDATE` on `status: PENDING` plus the age bound, so two API replicas cannot
+both resend the same message.
+
+**Exit:** no delivery stays `PENDING` forever, and no SMS is ever resent on a
+guess.
+
+**Met.** `tests/api/operations.ts` — 32 assertions. A row merely in flight is
+left alone; a stale email settles `SENT` with the extra attempt recorded; a
+stale SMS settles `FAILED` flagged for review; two sweepers racing one row
+resolve it exactly once. Retention deletes aged published rows, keeps recent
+ones, and **keeps an unpublished row at any age** — that one is work still owed,
+and deleting it would destroy the notification and the evidence in one
+statement.
 
 ---
 

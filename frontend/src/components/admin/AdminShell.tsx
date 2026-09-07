@@ -51,6 +51,7 @@ export default function AdminShell({
     { href: "/admin/customers", label: "Customers", icon: <UsersIcon /> },
     { href: "/admin/catalogue", label: "Catalogue", icon: <TagIcon /> },
     { href: "/admin/reports", label: "Reports", icon: <FlagIcon />, badge: openReports },
+    { href: "/admin/deliveries", label: "Delivery log", icon: <SendIcon /> },
     { href: "/admin/audit", label: "Audit log", icon: <ScrollIcon /> },
   ];
 
@@ -258,6 +259,14 @@ function FlagIcon() {
   return (
     <svg {...s}>
       <path d="M5 17V3.5m0 0h9l-2 3 2 3H5" {...stroke} />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg {...s}>
+      <path d="M17 3.5 8.5 12M17 3.5l-5.5 13-3-4.5-4.5-3z" {...stroke} />
     </svg>
   );
 }

@@ -375,51 +375,44 @@ void main(
     const { ensureTopics, kafka } = await import("../../src/lib/kafka");
     const { republish, closeRetryProducer } = await import("../../src/lib/retry");
 
-    await ensureTopics("kintsugi-test-admin");
+    /**
+     * GATED ON A REACHABLE BROKER, NOT MERELY ON THE VARIABLE BEING SET.
+     *
+     * `KAFKA_BROKERS` pointing at a broker that is not running produced five
+     * hard failures and a "Broker transport failure" that says nothing about
+     * what to do — during a full-suite run where the variable was exported out
+     * of habit and Compose was down. A stale environment variable is a
+     * configuration mistake, and the loud skip is what this file already does
+     * for a missing one.
+     */
+    try {
+      await ensureTopics("kintsugi-test-admin");
+    } catch (err) {
+      t.note(
+        `KAFKA_BROKERS is set to "${process.env.KAFKA_BROKERS}" but the broker did not answer:`
+      );
+      t.note(`  ${err instanceof Error ? err.message : String(err)}`);
+      t.note("Start it, or unset KAFKA_BROKERS to skip this section deliberately:");
+      t.note("  docker compose --profile messaging up -d kafka");
+      return;
+    }
+
     t.check(true, "the topics exist, or were created");
 
     /**
-     * Read from the END of each topic, so this asserts on what THIS run put
-     * there. `fromBeginning` would replay every retry any previous run left
-     * behind and make the suite pass or fail on history.
+     * PRODUCE FIRST, THEN READ FROM THE BEGINNING.
+     *
+     * The obvious shape — subscribe, wait a moment, produce — is a race this
+     * suite lost on its first real run against a broker: joining a group and
+     * being assigned partitions takes longer than the sleep, so the messages
+     * were produced to a consumer that was not yet listening and the assertions
+     * saw an empty list. Sleeping longer would only make the race rarer.
+     *
+     * Producing first removes it. The group id is unique per run and
+     * `fromBeginning` is true, so this consumer reads the whole topic; the
+     * eventIds are unique per run, so anything an earlier run left behind is
+     * filtered out rather than mistaken for this one's.
      */
-    const consumer = kafka("kintsugi-test").consumer({
-      kafkaJS: {
-        groupId: `${TAG}.reader`,
-        fromBeginning: false,
-        allowAutoTopicCreation: false,
-      },
-    });
-
-    type Seen = {
-      topic: string;
-      key: string | null;
-      eventId: string;
-      attempt: number;
-      group: string | undefined;
-      error: string | undefined;
-    };
-    const seen: Seen[] = [];
-
-    await consumer.connect();
-    await consumer.subscribe({ topics: [TOPICS.retry5s, TOPICS.dlq] });
-    await consumer.run({
-      eachMessage: async ({ topic, message }) => {
-        const decoded = JSON.parse(String(message.value));
-        seen.push({
-          topic,
-          key: message.key ? String(message.key) : null,
-          eventId: decoded.eventId,
-          attempt: attemptOf(message.headers),
-          group: groupOf(message.headers),
-          error: message.headers?.["retry-last-error"]?.toString(),
-        });
-      },
-    });
-
-    /** The group has to be assigned before a send, or it misses it. */
-    await new Promise((r) => setTimeout(r, 4_000));
-
     const onward = event();
     await republish({
       event: onward,
@@ -438,13 +431,62 @@ void main(
       lastError: "still unreachable after three rungs",
     });
 
-    const deadline = Date.now() + 20_000;
+    await closeRetryProducer();
+
+    type Seen = {
+      topic: string;
+      key: string | null;
+      eventId: string;
+      attempt: number;
+      group: string | undefined;
+      error: string | undefined;
+    };
+    const seen: Seen[] = [];
+    const wanted = new Set([onward.eventId, dead.eventId]);
+
+    const consumer = kafka("kintsugi-test").consumer({
+      kafkaJS: {
+        groupId: `${TAG}.reader`,
+        fromBeginning: true,
+        allowAutoTopicCreation: false,
+      },
+    });
+
+    await consumer.connect();
+    await consumer.subscribe({ topics: [TOPICS.retry5s, TOPICS.dlq] });
+    await consumer.run({
+      eachMessage: async ({ topic, message }) => {
+        /**
+         * Anything undecodable is skipped rather than thrown on. A delay topic
+         * is shared with whatever previous runs and manual probes left there,
+         * and one unparseable message must not fail a suite that is asking
+         * about two specific events — the same reasoning the worker applies to
+         * a poison pill.
+         */
+        let decoded: { eventId?: string };
+        try {
+          decoded = JSON.parse(String(message.value)) as { eventId?: string };
+        } catch {
+          return;
+        }
+        if (!decoded.eventId || !wanted.has(decoded.eventId)) return;
+        seen.push({
+          topic,
+          key: message.key ? String(message.key) : null,
+          eventId: decoded.eventId,
+          attempt: attemptOf(message.headers),
+          group: groupOf(message.headers),
+          error: message.headers?.["retry-last-error"]?.toString(),
+        });
+      },
+    });
+
+    const deadline = Date.now() + 40_000;
     while (seen.length < 2 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 250));
     }
 
     await consumer.disconnect();
-    await closeRetryProducer();
 
     const rung = seen.find((m) => m.eventId === onward.eventId);
     t.check(!!rung, "the failed message arrives on a rung", seen);
@@ -476,7 +518,7 @@ void main(
       dlq?.error
     );
 
-    t.note("Still needing a running worker process, not just a broker:");
+        t.note("Still needing a running worker process, not just a broker:");
     t.note("  - a rung's message is not processed before its delay elapses");
     t.note("  - an offset is committed only after the ledger row is settled");
   },

@@ -5,6 +5,7 @@ import {
   RefundStatus,
   ReportStatus,
 } from "../generated/prisma/enums";
+import type { DeliveryChannel, DeliveryStatus } from "../generated/prisma/enums";
 
 /**
  * Read-only queries behind the admin dashboard.
@@ -617,4 +618,143 @@ export async function topSellers(days: Range, limit = 5) {
     grossCents: Number(r.cents),
     units: Number(r.units),
   }));
+}
+
+/* ------------------------------------------------------------------ *
+ * The delivery ledger
+ * ------------------------------------------------------------------ */
+
+/**
+ * "Did the buyer actually get the refund email?"
+ *
+ * That is a real support question, asked often, and until this existed the only
+ * way to answer it was a database console — which means in practice it was
+ * answered by guessing, or by resending and hoping.
+ *
+ * SEARCHES BY THE THINGS SOMEBODY ACTUALLY HAS. A support conversation starts
+ * with an email address, occasionally with an order id pasted out of a
+ * notification link. It never starts with an eventId, so searching by email or
+ * name has to work, and the eventId is accepted only because it is what an
+ * engineer looking at a DLQ entry will have.
+ *
+ * The row carries WHY, not just what: `suppressReason` for a channel the
+ * recipient turned off, `lastError` for a provider that refused, `notBefore`
+ * for something quiet hours parked. An answer of "FAILED" with no reason sends
+ * the person straight back to the database.
+ */
+export async function listDeliveries(opts: {
+  q?: string;
+  channel?: "ALL" | DeliveryChannel;
+  status?: "ALL" | DeliveryStatus;
+  page?: number;
+}) {
+  const q = opts.q?.trim();
+
+  /**
+   * An email or name has to become a set of user ids first, because the ledger
+   * has no relation to `users` — `userId` is a plain column so a delivery
+   * record outlives the account it was for.
+   */
+  let userIds: string[] | undefined;
+  if (q && !q.includes("-")) {
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { email: { contains: q, mode: "insensitive" } },
+          { name: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      select: { id: true },
+      take: 200,
+    });
+    userIds = users.map((u) => u.id);
+  }
+
+  const where = {
+    ...(opts.channel && opts.channel !== "ALL" ? { channel: opts.channel } : {}),
+    ...(opts.status && opts.status !== "ALL" ? { status: opts.status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { eventId: q },
+            { userId: q },
+            { notificationId: q },
+            ...(userIds && userIds.length > 0 ? [{ userId: { in: userIds } }] : []),
+          ],
+        }
+      : {}),
+  };
+
+  const total = await prisma.notificationDelivery.count({ where });
+  const { skip, page, pages, pageSize } = paginate(opts.page ?? 1, total);
+
+  const rows = await prisma.notificationDelivery.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    skip,
+    take: pageSize,
+  });
+
+  /**
+   * Recipients and notification text are fetched in two queries rather than
+   * per row. Twenty-five rows would otherwise be fifty extra round trips, and
+   * this page is opened while somebody is on the phone.
+   */
+  const recipients = new Map(
+    (
+      await prisma.user.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.userId))] } },
+        select: { id: true, email: true, name: true },
+      })
+    ).map((u) => [u.id, u])
+  );
+
+  const notificationIds = [
+    ...new Set(rows.map((r) => r.notificationId).filter((id): id is string => !!id)),
+  ];
+  const notifications = new Map(
+    (
+      await prisma.notification.findMany({
+        where: { id: { in: notificationIds } },
+        select: { id: true, title: true, type: true },
+      })
+    ).map((n) => [n.id, n])
+  );
+
+  /** Counts for the whole filtered set, not just this page. */
+  const grouped = await prisma.notificationDelivery.groupBy({
+    by: ["status"],
+    where,
+    _count: { _all: true },
+  });
+  const byStatus = Object.fromEntries(grouped.map((g) => [g.status, g._count._all]));
+
+  return {
+    rows: rows.map((r) => {
+      const who = recipients.get(r.userId);
+      const what = r.notificationId ? notifications.get(r.notificationId) : undefined;
+      return {
+        id: r.id,
+        eventId: r.eventId,
+        channel: r.channel,
+        status: r.status,
+        // Null when the account has since been deleted, which is worth showing
+        // rather than hiding: the delivery still happened.
+        recipient: who ? { id: who.id, email: who.email, name: who.name } : null,
+        notification: what ? { id: what.id, title: what.title, type: what.type } : null,
+        providerMessageId: r.providerMessageId,
+        attempts: r.attempts,
+        lastError: r.lastError,
+        suppressReason: r.suppressReason,
+        notBefore: r.notBefore,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+      };
+    }),
+    byStatus,
+    total,
+    page,
+    pages,
+    pageSize,
+  };
 }

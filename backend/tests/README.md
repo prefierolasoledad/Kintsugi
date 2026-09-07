@@ -48,6 +48,39 @@ Without it that section **skips loudly and names what went unproven**, rather
 than passing quietly. A section that reports green for something nobody ran is
 worse than no section, because it is believed.
 
+It has now actually been run: 48 assertions with a broker against 38 without.
+Worth saying because the first real run **failed** — the section produced its
+messages after subscribing and lost a race with group assignment, which no
+amount of sleeping would have fixed reliably. Gated code that has never
+executed is not tested, it is only written.
+
+**Start the API with `RELAY_IN_PROCESS=false` for a full run.**
+
+```bash
+RELAY_IN_PROCESS=false REDIS_URL=redis://localhost:6379 npm run dev
+```
+
+On the inline transport the API also runs the outbox relay. `outbox` drives
+`relayOnce()` by hand and registers its spy consumer in the TEST process, so a
+relay ticking in the API claims the same rows and hands them to its own
+consumers — and the suite reports `one event published — 0`, which is true and
+tells you nothing. Nothing else needs that relay; the delivery suites call the
+consumers directly. The suite detects the clash and names it rather than
+failing five assertions in a row.
+
+**One assertion in `payment-safety` is flaky in a full run, and it is worth
+knowing why.** Section 10 checks that no card data is persisted by scanning
+*every* order and order item in the database for the test card numbers — and
+also for their last four digits, `4242` and `0002`. The full-PAN checks are
+sound. The four-digit ones are not scoped to this suite's own rows, so they can
+match a UUID or a provider reference another suite left behind: one full run
+failed on `no trace of 0002` while the same suite passed standalone. It is a
+scoping problem in the assertion, not a leak.
+
+**Unset `KAFKA_BROKERS` unless a broker is actually up.** Pointing it at a dead
+broker is a configuration mistake, not a reason to fail: `retry-ladder` skips
+its broker section loudly and says which variable is stale.
+
 The runner checks the rest before starting and prints one clear sentence if
 something is missing, rather than producing forty confusing failures. That
 matters — a stopped API once looked like a frontend bug for several minutes.

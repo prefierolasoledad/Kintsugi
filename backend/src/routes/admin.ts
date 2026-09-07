@@ -39,6 +39,7 @@ import {
   orderDetail,
   recentOrders,
   topSellers,
+  listDeliveries,
   type Range,
 } from "../lib/adminStats";
 import {
@@ -563,6 +564,40 @@ adminRouter.post("/users/:id/reinstate", async (req, res) => {
 });
 
 /* ---- audit ---- */
+
+/**
+ * The delivery ledger.
+ *
+ * Behind the same admin gate as everything else in this router, and that is not
+ * incidental: these rows say which notifications a named person received, which
+ * is exactly as sensitive as their order history. The response carries a MASKED
+ * provider id and never the message body — the ledger records that something
+ * was sent, not what it said (ADR 0026), and this endpoint must not become the
+ * place that leaks it.
+ */
+adminRouter.get("/deliveries", async (req, res) => {
+  try {
+    const channel = z
+      .enum(["ALL", "EMAIL", "PUSH", "SMS"])
+      .catch("ALL")
+      .parse(req.query.channel ?? "ALL");
+    const status = z
+      .enum(["ALL", "PENDING", "SENT", "FAILED", "SUPPRESSED", "DEFERRED"])
+      .catch("ALL")
+      .parse(req.query.status ?? "ALL");
+
+    res.json(
+      await listDeliveries({
+        q: queryParam(req),
+        channel,
+        status,
+        page: pageParam(req),
+      })
+    );
+  } catch (err) {
+    fail(res, err, "Could not load the delivery log.");
+  }
+});
 
 adminRouter.get("/audit", async (_req, res) => {
   try {

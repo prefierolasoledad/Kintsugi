@@ -388,8 +388,12 @@ that then rolled back. See [ADR 0024](../adr/0024-outbox-not-dual-writes.md).
     the downstream problem the delivery ledger solves
     ([ADR 0026](../adr/0026-delivery-idempotency.md); `notification_deliveries`,
     claimed before the provider is called).
-26. Published rows are never pruned yet. This table grows without bound until
-    retention lands in phase 6.
+26. Published rows are pruned after 7 days by `startOutboxRetentionSweeper`,
+    matching the main topic's retention: a published row's only remaining use
+    is republishing an event Kafka lost, and once the broker has itself dropped
+    the message that use is gone. **Unpublished rows are never deleted at any
+    age** — one of those is work still owed, and deleting it would destroy the
+    notification and the evidence in one statement.
 
 The partial index is added by hand because Prisma cannot express one, the same
 way the `HELD` reservation constraint is:

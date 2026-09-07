@@ -49,6 +49,26 @@ const TX_TIMEOUT_MS = 15_000;
 
 export const DEFAULT_POLL_MS = 1_000;
 
+/**
+ * Whether THIS process should tick the relay itself.
+ *
+ * The answer is yes on the inline transport, where there is no broker and a
+ * separate container for a function call would be ceremony — and no when
+ * `RELAY_IN_PROCESS` is switched off, which exists for the test suite.
+ * `tests/api/outbox.ts` drives `relayOnce()` by hand and registers its spy
+ * consumer in the TEST process, so a relay ticking here claims the same rows
+ * and hands them to the wrong consumers.
+ *
+ * Exported rather than inlined at the call site because two places need the
+ * same answer: the boot sequence, which acts on it, and `/health/lag`, which
+ * reports it so a test can tell whether it is competing with anything.
+ */
+export function relayEnabledInProcess(): boolean {
+  return !["false", "0", "off", "no"].includes(
+    (process.env.RELAY_IN_PROCESS ?? "").trim().toLowerCase()
+  );
+}
+
 type ClaimedRow = {
   id: string;
   eventId: string;

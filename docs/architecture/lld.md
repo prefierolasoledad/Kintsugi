@@ -41,7 +41,13 @@ flowchart TB
     A & C & S & V --> PR
 ```
 
-### `lib/` reference
+The diagram above is the **signup-to-listing slice only** — it is the oldest part
+of the system and the one a reader usually needs first. The buying, moderation
+and notification modules are tabulated below rather than drawn here; the
+notification pipeline has its own diagram in
+[plan 0001](../plans/0001-multi-channel-notifications.md).
+
+### `lib/` reference — foundations
 
 | Module | Responsibility | Notes |
 | --- | --- | --- |
@@ -59,6 +65,58 @@ flowchart TB
 | `rateLimit.ts` | Fixed-window counter | Redis + Lua, shared across instances |
 | `cache.ts` | Read-through cache | Cache-aside, fail-open, stale-while-revalidate |
 | `cacheKeys.ts` | Every cache key and TTL | One file, so invalidation is discoverable |
+
+### `lib/` reference — buying and selling
+
+| Module | Responsibility |
+| --- | --- |
+| `reservations.ts` | Holds stock during checkout under `SELECT … FOR UPDATE`, and the sweeper that releases expired holds ([ADR 0012](../adr/0012-row-locking-for-reservations.md)) |
+| `cart.ts` | Basket assembly and pricing, read from live listings |
+| `orders.ts` | Order creation, the claim-then-charge sequence, and the sweeper that settles in-flight payments |
+| `sales.ts` | The seller's side: shipped, delivered, unfulfillable — per line, not per order |
+| `addresses.ts` | Address CRUD, and the snapshot copied onto an order so later edits cannot rewrite history |
+| `wishlist.ts` | Saved items |
+| `stripeClient.ts` | The shared Stripe client. Separate from `paymentProvider.ts` because payments and identity are independently configurable |
+| `verification.ts` | Applies an identity decision to a seller profile; sets `payoutsEnabled` |
+
+### `lib/` reference — trust and administration
+
+| Module | Responsibility |
+| --- | --- |
+| `reviews.ts` | Reviews, and ratings computed from rows rather than stored ([ADR 0009](../adr/0009-computed-ratings.md)) |
+| `moderation.ts` | Removals, suspensions and report resolution, each writing an append-only audit row |
+| `adminAuth.ts` | The separate short-lived admin session and its TOTP step-up ([ADR 0015](../adr/0015-admin-by-cli-grant-and-step-up.md)) |
+| `adminStats.ts` | Every read-only query behind the admin panel, including the delivery log |
+| `passwordReset.ts` | Reset tokens: hashed, single-use, and no account enumeration ([ADR 0017](../adr/0017-password-change-and-reset.md)) |
+| `redis.ts` | Connection singleton shared by the limiter and the cache |
+
+### `lib/` reference — notifications
+
+The pipeline, roughly in the order an event travels. Decisions are
+[ADR 0024](../adr/0024-outbox-not-dual-writes.md) through
+[ADR 0028](../adr/0028-sms-provider-twilio-behind-a-seam.md).
+
+| Module | Responsibility |
+| --- | --- |
+| `notifications.ts` | `notify()` / `notifyMany()` — writes the notification **and** its outbox row in one transaction. The eleven call sites only ever touch `events.*` |
+| `outbox.ts` | `enqueue(tx, event)`, which takes a transaction client so it cannot be called outside one. Also the event codec |
+| `relay.ts` | Claims unpublished rows with `FOR UPDATE SKIP LOCKED` and publishes them. N relays divide the backlog rather than duplicating it |
+| `notifyTransport.ts` | The `inline` / `kafka` seam. Under `inline` the relay calls the consumer functions directly — no broker, which is what CI runs |
+| `kafka.ts` | Client, topic names, partition counts and retention. The native client is imported lazily so the inline path never loads it |
+| `consumers.ts` | The channel consumers as plain async functions, so the same code runs under both transports |
+| `channelPolicy.ts` | Which channels each event type uses by default, and how an explicit preference overrides it |
+| `deliveryLedger.ts` | Claims a delivery **before** the provider is called; settles it after. The unique constraint is what makes an at-least-once broker safe ([ADR 0026](../adr/0026-delivery-idempotency.md)) |
+| `retry.ts` | The 5s / 1m / 15m delay topics and the dead-letter queue. Delays live on separate topics because a consumer that waits blocks its whole partition |
+| `stalePending.ts` | Resolves deliveries claimed and never settled, on a per-channel policy: email and push are resent, SMS never is |
+| `deferredDeliveries.ts` | Sends what quiet hours parked, once the window opens — claimed by conditional `UPDATE` so N replicas divide the work |
+| `outboxRetention.ts` | Prunes published rows after 7 days, matching topic retention. Unpublished rows are never deleted at any age |
+| `consumerLag.ts` | Per-group lag, per-topic, plus dead-letter depth — behind `GET /health/lag` |
+| `unsubscribe.ts` | Signed unsubscribe tokens and one-click headers |
+| `push.ts` | Web Push over VAPID. A `410` or `404` deletes the subscription — the protocol saying the browser is gone |
+| `smsProvider.ts` | The Twilio seam, and the table of provider error codes that are permanent rather than transient |
+| `smsVerification.ts` | Six-digit codes: hashed, ten-minute expiry, attempt-capped |
+| `phone.ts` | E.164 normalisation. Deliberately shape-only — the code is what proves a number is real |
+| `quietHours.ts` | The window, and the arithmetic for one that wraps midnight |
 
 ### Frontend modules
 

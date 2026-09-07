@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { WEB, prisma, requireCatalog, requireServices } from "../lib/db";
 import { currentCode, freshCode } from "../lib/totp";
 import { buyOne, PASSWORD, Scope } from "../lib/fixtures";
@@ -120,7 +121,15 @@ void main(
         "and the page says why that distinction is made");
 
       /* ---- the sidebar ---- */
-      for (const label of ["Dashboard", "Orders", "Customers", "Catalogue", "Reports", "Audit log"]) {
+      for (const label of [
+        "Dashboard",
+        "Orders",
+        "Customers",
+        "Catalogue",
+        "Reports",
+        "Delivery log",
+        "Audit log",
+      ]) {
         t.check(
           await h.page.getByRole("link", { name: label, exact: true }).first().isVisible(),
           `the sidebar has ${label}`
@@ -290,6 +299,105 @@ void main(
       await dialog.getByRole("button", { name: /cancel/i }).click();
       await h.page.waitForTimeout(700);
       t.check(!(await dialog.isVisible().catch(() => false)), "cancel closes it changing nothing");
+
+      /* ============================================================ */
+      t.section("delivery log");
+
+      /**
+       * The page that exists so "did the buyer get the refund email?" has an
+       * answer. A row is written directly rather than by triggering a real
+       * notification, because what is under test here is whether a moderator
+       * can READ the ledger — the writing of it is covered, at length, by the
+       * email, push, sms and operations suites.
+       */
+      const ledgerEvent = randomUUID();
+      await prisma.notificationDelivery.create({
+        data: {
+          eventId: ledgerEvent,
+          channel: "EMAIL",
+          userId: adminId,
+          status: "SUPPRESSED",
+          suppressReason: "EMAIL is not used for ORDER_DELIVERED",
+          completedAt: new Date(),
+        },
+      });
+
+      await h.page.goto(`${WEB}/admin/deliveries`, { waitUntil: "networkidle" });
+
+      /**
+       * Waited for explicitly, because `networkidle` fires before the page's
+       * own fetch resolves — the list is client-side. Reading innerText
+       * straight after the navigation caught the intro paragraph and no table,
+       * which looked exactly like a rendering bug and was not.
+       */
+      await h.page.locator("table").first().waitFor({ state: "visible", timeout: 15_000 });
+      const log = await h.page.locator("main").innerText();
+
+      /**
+       * Asserted on the columns rather than the page title: the title is
+       * rendered by AdminGate in the header, outside <main>, so matching it
+       * here would pass or fail on where the heading lives rather than on
+       * whether the table arrived.
+       */
+      /**
+       * Compared case-insensitively, because `Th` applies `uppercase` in CSS
+       * and innerText reflects text-transform — so the DOM says "Recipient"
+       * and the browser reports "RECIPIENT". A case-sensitive match here
+       * failed while the page was rendering perfectly, which is a bad way to
+       * spend twenty minutes.
+       */
+      const columns = log.toUpperCase();
+      t.check(
+        ["RECIPIENT", "NOTIFICATION", "CHANNEL", "OUTCOME", "WHY"].every((h2) =>
+          columns.includes(h2)
+        ),
+        "the delivery log opens, with the columns a support answer needs",
+        log.slice(0, 300)
+      );
+
+      /**
+       * The distinction the page exists to make. SUPPRESSED is neither a
+       * success nor a fault, and a moderator reading this while on the phone
+       * should not have to guess which.
+       */
+      t.check(
+        /suppressed is a decision, not a fault/i.test(log),
+        "and explains that a suppressed delivery is a choice rather than a failure"
+      );
+
+      /* ---- searching by the thing support actually has: an email ---- */
+      await h.page.getByPlaceholder(/email, name, or event id/i).fill(adminEmail);
+      await h.page.waitForTimeout(900);
+      const found = await h.page.locator("main").innerText();
+
+      t.check(
+        found.includes(adminEmail),
+        "searching by email address finds that person's deliveries"
+      );
+      t.check(
+        /EMAIL/.test(found) && /Suppressed/i.test(found),
+        "showing the channel and the outcome",
+        found.slice(0, 200)
+      );
+      /**
+       * The reason column is most of the value. "SUPPRESSED" with no reason
+       * sends the reader straight back to a database console, which is the
+       * thing this page was built to replace.
+       */
+      t.check(
+        /is not used for ORDER_DELIVERED/i.test(found),
+        "and the reason, in the words the ledger recorded"
+      );
+
+      /* ---- a search that cannot match must say so ---- */
+      await h.page.getByPlaceholder(/email, name, or event id/i).fill("nobody@nowhere.invalid");
+      await h.page.waitForTimeout(900);
+      t.check(
+        /nothing matches/i.test(await h.page.locator("main").innerText()),
+        "a search with no matches says so rather than showing everything"
+      );
+
+      await prisma.notificationDelivery.deleteMany({ where: { eventId: ledgerEvent } });
 
       /* ============================================================ */
       t.section("nothing broke along the way");

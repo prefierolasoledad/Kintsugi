@@ -222,6 +222,35 @@ export type ListingRow = {
   sold: number;
 };
 
+export type DeliveryChannel = "EMAIL" | "PUSH" | "SMS";
+export type DeliveryStatus = "PENDING" | "SENT" | "FAILED" | "SUPPRESSED" | "DEFERRED";
+
+/**
+ * One attempt to get one notification to one person on one channel.
+ *
+ * `recipient` is nullable because the ledger has no foreign key to `users` — a
+ * delivery record has to outlive the account it was for, so an answer of "this
+ * was sent to an account since deleted" is a real and useful one.
+ *
+ * There is no message body here, and there is not meant to be. The ledger
+ * records that something was sent, not what it said.
+ */
+export type DeliveryRow = {
+  id: string;
+  eventId: string;
+  channel: DeliveryChannel;
+  status: DeliveryStatus;
+  recipient: { id: string; email: string; name: string } | null;
+  notification: { id: string; title: string; type: string } | null;
+  providerMessageId: string | null;
+  attempts: number;
+  lastError: string | null;
+  suppressReason: string | null;
+  notBefore: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
 export type Paged<T> = {
   rows: T[];
   total: number;
@@ -354,6 +383,21 @@ export function getCustomer(id: string) {
 
 export function getCatalogue(opts: { q?: string; status?: string; page?: number } = {}) {
   return request<Paged<ListingRow>>(`/catalogue${qs(opts)}`);
+}
+
+/**
+ * The delivery log.
+ *
+ * Search takes an email address or a name, because that is what a support
+ * conversation actually starts with. An eventId works too, for whoever is
+ * holding a dead-letter queue entry.
+ */
+export function getDeliveries(
+  opts: { q?: string; channel?: string; status?: string; page?: number } = {}
+) {
+  return request<Paged<DeliveryRow> & { byStatus: Record<string, number> }>(
+    `/deliveries${qs(opts)}`
+  );
 }
 
 export function getReports(status: "OPEN" | "RESOLVED" | "DISMISSED" | "ALL" = "OPEN") {

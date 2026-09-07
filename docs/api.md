@@ -49,6 +49,39 @@ because that is what a price filter collects.
 { "status": "ok", "service": "kintsugi-backend" }
 ```
 
+### `GET /health/lag`
+
+Is anyone actually *receiving* notifications. Separate from `/health` because it
+talks to a broker over the network, and a load balancer's liveness probe must
+not depend on that.
+
+**503 when unhealthy**, so a monitor does not have to parse a body to know.
+
+```json
+{
+  "transport": "kafka",
+  "healthy": true,
+  "groups": [
+    { "group": "email-worker", "lag": 0, "byTopic": {}, "uncommitted": 0 },
+    { "group": "sms-worker", "lag": 140, "byTopic": { "kintsugi.notifications.v1": 140 }, "uncommitted": 30 }
+  ],
+  "dlqDepth": 0,
+  "thresholds": { "lag": 5000, "dlq": 100 }
+}
+```
+
+Lag covers **every rung of the retry ladder**, not just the main topic: a group
+stalled on `retry.15m` is a real failure that main-topic lag reports as zero.
+
+`uncommitted` is partitions the group has never committed. Their whole retained
+backlog is counted in `lag` — because that is what the group still owes — but
+the count is separate so "never started" stays distinguishable from "fallen
+behind", which matters for the few seconds after a deploy.
+
+On the inline transport it answers `{ "transport": "inline", "healthy": true,
+"detail": … }`. **It does not alert.** There is no alerting stack here, and the
+thresholds are returned so that whatever does alert need not encode them.
+
 ---
 
 ## Auth — `/auth`
@@ -837,6 +870,7 @@ retype the digits their app is still displaying.
 | `GET /admin/overview` | Bare counts, used for the sidebar badge |
 | `GET /admin/reports?status=` | The moderation queue, **oldest first** |
 | `GET /admin/audit` | Every moderation action, newest first |
+| `GET /admin/deliveries?q=&channel=&status=&page=` | The delivery ledger. `q` takes an email address, a name, or an `eventId`; `channel=EMAIL\|PUSH\|SMS`; `status` adds `DEFERRED` and `PENDING`. Also returns `byStatus` for the whole filtered set |
 
 Lists page at **25**, returning `{ rows, total, page, pages, pageSize }`.
 
@@ -846,6 +880,19 @@ Period-on-period deltas come back **`null`**, not `0` or `100`, when the prior
 period had nothing to compare against.
 
 The report queue returns `reporterName` and **never the reporter's email**.
+
+`deliveries` answers "did the buyer get the refund email?" — a real support
+question that previously needed a database console. Each row carries *why*, not
+just what: `suppressReason` for a channel the recipient turned off,
+`lastError` for a provider that refused, `notBefore` for something quiet hours
+parked. `recipient` is **null** when the account has since been deleted, because
+the ledger has no foreign key to `users` and a delivery record has to outlive
+the account it was for.
+
+**There is no message body in the response, and there is not meant to be.** The
+ledger records that something was sent, not what it said
+([ADR 0026](adr/0026-delivery-idempotency.md)), and this endpoint must not
+become the place that leaks it.
 
 ### Actions — every one writes an audit row
 

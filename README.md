@@ -12,8 +12,9 @@ a Next.js storefront, an Express API, and PostgreSQL.
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
 > verification, email, web push, SMS, and an admin dashboard all work — covered by
-> **1,049 assertions across 30 suites** (`npm test`), run against the real stack
-> rather than mocks. Payments and identity run against Stripe's test mode: no real
+> **1,084 assertions across 31 suites** (`npm test`), run against the real stack
+> rather than mocks — 1,094 with a Kafka broker present, which unlocks the
+> broker-gated section of `retry-ladder`. Payments and identity run against Stripe's test mode: no real
 > money moves, no real document is checked. Payouts to sellers are the one
 > significant feature not built. See [What's built](#whats-built).
 
@@ -103,7 +104,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**1,049 assertions across 30 suites**, and they drive the actual stack — a real
+**1,084 assertions across 31 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -134,7 +135,7 @@ npm run seed:scale          # 900 more listings across 30 sellers
 
 ### Measuring the infrastructure
 
-Two scripts exist to make claims about scaling checkable rather than asserted.
+Five scripts exist to make claims about scaling checkable rather than asserted.
 
 ```bash
 REDIS_URL=redis://localhost:6379 npx tsx scripts/cache-demo.ts
@@ -201,6 +202,91 @@ against a stated limit of 10 per 15 minutes. Sharing nothing, **30 get through**
 Sharing Redis, 10 do. See [ADR 0019](docs/adr/0019-cache-tiering-rule.md) and
 [ADR 0018](docs/adr/0018-redis-for-shared-ephemeral-state.md).
 
+```bash
+docker compose --profile messaging up -d kafka
+npm run build            # the consumers are the compiled build
+
+NOTIFY_TRANSPORT=kafka KAFKA_BROKERS=localhost:9092 \
+  npx tsx scripts/notification-throughput-demo.ts
+```
+
+Pushes 10,000 notifications to 500 distinct recipients through the real email
+consumer group, at five consumer counts. The topic is drained onto the broker
+before the clock starts, so these are consumer-side figures — the relay's own
+rate is reported separately.
+
+| Consumers | p50 | p95 | Events/sec | Assigned partitions |
+| --- | --- | --- | --- | --- |
+| 1 | 56.3s | 88.3s | 109 | 1/1 |
+| 3 | 47.8s | 71.1s | 136 | 3/3 |
+| 6 | 38.0s | 54.5s | 174 | 6/6 |
+| 12 | 33.8s | 50.0s | 189 | 12/12 |
+| 15 | 33.1s | 52.6s | **170** | **12/15** |
+
+**Three results here are unflattering, and they are the interesting ones.**
+
+*Twelve times the consumers buys 1.7x the throughput.* 109/sec to 189/sec.
+Measured on 4 CPUs with each consumer a separate process, so past roughly four
+they contend for cores — some of that flattening is the machine, not the design.
+
+*The broker is nowhere near the bottleneck.* The relay publishes at
+**3,400–4,600/sec** while the consumers drain at 109–189/sec: a gap of more than
+twenty times. What is slow is the per-event database work inside the consumer,
+which means the throughput half of the case for Kafka is the weakest half. At
+this volume a table and a worker really would do — which is what
+[plan 0001 §9](docs/plans/0001-multi-channel-notifications.md) already conceded.
+Kafka earns its place on fan-out, failure isolation, and replay instead.
+
+*Past 12 consumers the extra ones do nothing, and throughput gets worse.* At 15
+the broker assigned main-topic partitions to **12 of 15** — three consumers idle
+against a 12-partition topic — and the rate fell from 189 to 170. That figure
+comes from asking the broker which member owns which partition, not from
+inferring a ceiling from the curve, because a slow machine produces the same
+curve for an entirely different reason.
+
+```bash
+NOTIFY_TRANSPORT=kafka KAFKA_BROKERS=localhost:9092 \
+  npx tsx scripts/consumer-failure-demo.ts
+```
+
+SIGKILLs a consumer mid-batch — not SIGTERM, which is handled and therefore
+uninteresting — and counts what it cost. Killed with **2,215 of 3,000 events
+still outstanding**:
+
+```
+  duplicate deliveries                           0
+  lost events                                    0
+    of which stuck PENDING                       0
+```
+
+Both halves of one trade. The offset is committed *after* the handler returns,
+so a consumer that dies mid-send redelivers rather than losing the work — and
+that is only survivable because the ledger's unique constraint refuses the
+second claim. Commit-first loses; no-constraint doubles.
+
+The script also prints what the run did **not** prove: nothing was killed inside
+the window between claiming a delivery and settling it, so no row was left
+`PENDING`. That window is real, and the per-channel sweeper
+[ADR 0026](docs/adr/0026-delivery-idempotency.md) specifies for it is still
+unbuilt.
+
+```bash
+KAFKA_BROKERS=localhost:9092 npx tsx scripts/dlq-replay.ts           # report
+KAFKA_BROKERS=localhost:9092 npx tsx scripts/dlq-replay.ts --commit  # replay
+```
+
+An operator tool rather than a demo, because a dead-letter queue nobody can
+drain is a slower way of losing messages. It reports by channel and by reason,
+checks each entry against the ledger — replayable, already sent since, or no row
+at all — and does nothing without `--commit`.
+
+Replay goes to the **5s retry rung, not the main topic**, and that detail is
+load-bearing: a DLQ entry already has a `FAILED` ledger row, and the main topic
+is consumed with the strict claim, so a message put back there collides with its
+own row and is silently dropped while the logs show a successful replay. Only a
+retry rung is consumed with reclaim. Verified end to end: replayed, picked up one
+rung later, `SENT` with `attempts=2`.
+
 ## Documentation
 
 The README stays deliberately short. Everything else lives in [`docs/`](docs/):
@@ -212,7 +298,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 27 ADRs on why things are built the way they are — 23 accepted, 4 proposed |
+| [Decision records](docs/adr/README.md) | 28 ADRs on why things are built the way they are, all accepted |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
@@ -234,7 +320,7 @@ Kintsugi/
 │   │   ├── middleware/ requireAuth, requireSeller, requireAdmin
 │   │   └── routes/     15 routers — auth, catalog, seller, orders,
 │   │                   reservations, admin, webhooks, and the rest
-│   └── tests/          30 suites: api/, browser/, and shared fixtures
+│   └── tests/          31 suites: api/, browser/, and shared fixtures
 ├── frontend/           Next.js storefront
 │   └── src/
 │       ├── app/        Routes, including BFF handlers under app/api/*
@@ -304,6 +390,18 @@ never learns the backend's address. See
 - Quiet hours **defer rather than drop**: a message caught at 3am is parked on
   the ledger and sent by a sweeper when the window opens, once, by exactly one
   replica
+- **A delivery log in the admin panel** — search by email address and see which
+  channels reached someone, and *why* one did not. "Did the buyer get the refund
+  email?" is a real support question that previously needed a database console
+- **Consumer lag at `/health/lag`** — per group, per topic including every retry
+  rung, plus dead-letter depth. 503 when it is behind, because a monitor should
+  not have to parse a body. It does not alert; there is no alerting stack here
+  and pretending otherwise would be worse than the gap
+- A stale-delivery sweeper for the one window the ledger cannot close on its
+  own: a consumer killed *between* claiming a delivery and settling it. Email
+  and push are resent, **SMS never is** — a duplicate text costs money and reads
+  like a phishing retry ([ADR 0026](docs/adr/0026-delivery-idempotency.md))
+- Retention for `outbox_events`, which grew without bound until now
 - Transient failures climb a 5s → 1m → 15m retry ladder of delay topics and
   land in a DLQ; permanent ones never retry
 - **Runs with no broker by default.** `NOTIFY_TRANSPORT=inline` hands events

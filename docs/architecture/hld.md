@@ -21,7 +21,9 @@ flowchart TB
         Mail["Email provider<br/><i>SMTP via nodemailer</i>"]
         Kyc["Stripe Identity<br/><i>test mode; stub behind a seam</i>"]
         Pay["Stripe Payments<br/><i>test mode; stub behind a seam</i>"]
-        CDN["Image hosting<br/><i>local disk — object storage is the seam</i>"]
+        Sms["Twilio<br/><i>SMS; stub behind a seam</i>"]
+        Push["Web Push services<br/><i>the browser vendors' own endpoints</i>"]
+        CDN["Object storage<br/><i>S3-compatible; local disk is the other driver</i>"]
     end
 
     Buyer --> K
@@ -30,6 +32,8 @@ flowchart TB
     K -.-> Mail
     K -.-> Kyc
     K -.->|"intents, refunds, webhooks"| Pay
+    K -.->|"verified numbers only"| Sms
+    K -.-> Push
     K --> CDN
 ```
 
@@ -49,8 +53,11 @@ from a fork gets a meaningful green run without any credentials. See
 | **Cache & counters** | Redis 7 | Rate-limit counters and read-through cache. Holds nothing that must survive a restart — see [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md) |
 | **Standby** *(opt-in)* | PostgreSQL 16 | A byte-for-byte streaming clone, ~11ms behind. Read-only, and nothing queries it — it exists to be promoted. `--profile ha`. See [ADR 0020](../adr/0020-replication-and-backups.md) |
 | **Object storage** | MinIO (S3-compatible) | Processed photos and avatars, fetched by the browser directly. Anonymous read on objects only — see [ADR 0022](../adr/0022-object-storage-for-uploads.md) |
+| **Broker** *(opt-in)* | Kafka 4 in KRaft mode | Fans one notification event out to the channel workers. Holds in-flight deliveries only — losing it loses no notification, because the outbox still has the row. `--profile messaging`. See [ADR 0025](../adr/0025-kafka-topics-and-partitioning.md) |
+| **Relay** *(opt-in)* | Node | Publishes committed `outbox_events` rows to the broker. Safe to scale: the claim is `FOR UPDATE SKIP LOCKED`, so N relays divide the backlog rather than publishing it N times. Runs in-process under the inline transport instead |
+| **Channel workers** *(opt-in)* | Node | One consumer group each for email, push and SMS, so a dead SMS provider cannot stall email. Scale independently of the API |
 
-Two Node processes, deliberately. The Next.js server holds no business logic —
+Two Node processes in the default setup, deliberately. The Next.js server holds no business logic —
 it renders and forwards. Every rule is enforced in Express, so a client that
 bypasses the UI gains nothing.
 
@@ -228,9 +235,22 @@ regenerated when the title changes, so existing links keep working.
 **Errors.** Every route wraps its handler; failures log server-side with
 context and return a generic message. Internal details are not sent to clients.
 
+**Notifications.** No business module sends anything. They call `events.*`,
+which writes the notification and an outbox row in the same transaction; a relay
+publishes, and per-channel workers deliver. Every call site is `void`-ed and
+swallows its own errors, deliberately: failing to tell someone their item sold
+must not roll back the sale.
+→ [ADR 0024](../adr/0024-outbox-not-dual-writes.md)
+
+**Sweepers.** Five timers recover state nothing in the request path will reach
+again: expired stock holds, unpaid orders, notifications parked by quiet hours,
+deliveries claimed but never settled, and spent outbox rows. Each claims by
+conditional `UPDATE`, so running several API replicas divides the work instead
+of duplicating it.
+
 ## 6. Provider seams
 
-Four concerns sit behind an interface with two implementations — a real one and
+Six concerns sit behind an interface with two implementations — a real one and
 a stub — selected by an environment variable. Each is a single module, so
 changing provider means editing one file.
 
@@ -239,7 +259,9 @@ changing provider means editing one file.
 | Payments | `lib/paymentProvider.ts` | Stripe PaymentIntents + Refunds | In-process intents with test card numbers | `PAYMENT_PROVIDER` |
 | Identity | `lib/kycProvider.ts` | Stripe Identity | Deterministic outcomes by document-number suffix | `KYC_PROVIDER` |
 | Email | `lib/mailer.ts` | SMTP via nodemailer | Console, or Ethereal's throwaway inbox | `MAIL_TRANSPORT` |
-| File storage | `lib/storage.ts` | — | Local disk | *(not yet swappable)* |
+| File storage | `lib/storage.ts` | S3-compatible object storage (MinIO locally) | Local disk | `STORAGE_DRIVER` |
+| SMS | `lib/smsProvider.ts` | Twilio, over its REST API | In-memory; returns the code so the flow can be finished without a handset | `SMS_PROVIDER` |
+| Notification transport | `lib/notifyTransport.ts` | Kafka, with the relay and workers as their own processes | The relay hands events straight to the same consumer functions, in-process | `NOTIFY_TRANSPORT` |
 
 **The stubs are not placeholders for missing code.** They are what CI runs
 against: the suite drives the whole purchase, refund and verification flow with
@@ -250,21 +272,15 @@ are exercised separately against test mode.
 The API reports `isStub: true` and the UI says so on screen. A stub that
 silently looks real is worse than no stub.
 
-File storage is the one seam with no second implementation yet. `putFile`,
-`removeFile` and `publicUrl` are the whole surface; S3, R2 or Cloudinary
-replaces those three.
+`putFile`, `removeFile` and `publicUrl` are the whole storage surface, and both
+drivers share the same key validation so a driver change cannot orphan a stored
+URL. R2 or any other S3-compatible service drops in without touching a caller.
 
 ## 7. Known limitations
 
 - **No payouts to sellers.** The largest remaining gap. Money reaches the
   platform and can be refunded from it; paying sellers out needs Stripe Connect.
   `payoutsEnabled` is set by identity verification and nothing consumes it yet.
-- **Uploads live on local disk.** They do not survive a replacement container
-  and are not shared between replicas — which means the API cannot currently be
-  run with more than one replica, whatever else is shared. This is why the
-  storage seam exists. It also means seller photos do not render under Compose:
-  the browser loads them from `localhost:4000`, unreachable from inside the web
-  container.
 - **Failover is manual, and nothing is automatically replaced.** Both tiers can
   now run more than one replica — rate limits and the cache are in Redis
   ([ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md),
@@ -285,14 +301,26 @@ replaces those three.
   taken on demand and nothing expires old ones. Compose has no scheduler, and
   inventing one with a sleep loop would be a worse cron than cron — it is a
   CronJob in Kubernetes, and CloudNativePG does retention and verification too.
-- **Failover is manual.** Nothing promotes the standby. Compose cannot express
-  it; CloudNativePG can, which is part of why Kubernetes is next.
 - **Nothing reads from the replica**, deliberately. Routing reads to a standby
   introduces read-your-writes bugs — a buyer landing on an order list that has
   not replayed their order — and the caching in
   [ADR 0019](../adr/0019-cache-tiering-rule.md) already absorbed the read volume
   a replica would have relieved.
+- **Quiet hours use the server's timezone, not the recipient's.** Deferring
+  works — a message caught at 3am is parked and sent when the window opens — but
+  there is no timezone recorded against a person, so somebody abroad is quiet
+  during the server's night rather than their own.
+- **Exactly-once delivery is not claimed.** Kafka is at-least-once and the
+  ledger makes delivery idempotent, which is a weaker guarantee: a provider that
+  accepts a message and then fails to return an id can still produce a duplicate
+  at the far end.
 - **Aggregate ratings are computed per request.** One extra grouped query per
   page. Denormalising onto `Listing` is the optimisation, at the cost of
   keeping it consistent.
-- **No automated test suite.** See [CONTRIBUTING.md](../../CONTRIBUTING.md#testing).
+- **The suite needs the real stack, and takes about thirteen minutes.** Nothing
+  is mocked — 1,084 assertions across 31 suites drive a real Postgres, the real
+  Express API, and a production build of the storefront under a real browser. The
+  cost of that choice is that `npm test` cannot run against nothing: it needs a
+  database, a Redis, and both servers up. See
+  [CONTRIBUTING.md](../../CONTRIBUTING.md#testing) and
+  [backend/tests/README.md](../../backend/tests/README.md).

@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { prisma, requireServices } from "../lib/db";
+import { API, prisma, requireServices } from "../lib/db";
 import { main, wireInterrupt, cleanupOnInterrupt } from "../lib/harness";
 import { CONSUMERS, type NotificationConsumer } from "../../src/lib/consumers";
 import { enqueue } from "../../src/lib/outbox";
@@ -67,6 +67,40 @@ void main(
           "asserts on the inline transport and would otherwise publish to a broker."
       );
       t.check(false, "runs on the inline transport", process.env.NOTIFY_TRANSPORT);
+      return;
+    }
+
+    /**
+     * A RELAY TICKING ELSEWHERE MAKES THIS SUITE LIE.
+     *
+     * Every pass below is driven by hand so it happens exactly when this file
+     * says it does, and the spy consumer lives in THIS process. An API running
+     * on the inline transport also runs a relay, which claims the same rows
+     * and hands them to its own consumers — so the assertions become
+     * "one event published — 0": true, and useless as a diagnosis.
+     *
+     * Detected rather than endured. `/health/lag` reports the transport, so a
+     * competing relay can be identified and named instead of producing five
+     * confusing failures halfway through a full-suite run.
+     */
+    const live = await fetch(`${API}/health/lag`, {
+      signal: AbortSignal.timeout(5000),
+    })
+      .then((r) => r.json() as Promise<{ transport?: string; relayInProcess?: boolean }>)
+      .catch(() => null);
+
+    /**
+     * `relayInProcess`, not the transport. Inferring a competing relay from
+     * "the API is on the inline transport" is wrong the moment the relay is
+     * switched off — which is exactly the configuration this check is meant to
+     * approve, so the first version rejected the fix it was asking for.
+     */
+    if (live?.relayInProcess === true) {
+      t.note(`An API is running at ${API} on the inline transport, so its relay is`);
+      t.note("draining the outbox in parallel with this suite. Restart it with the");
+      t.note("in-process relay off — nothing else in the suite needs it:");
+      t.note("  RELAY_IN_PROCESS=false npm run dev");
+      t.check(false, "no competing relay is draining the outbox", live.transport);
       return;
     }
 

@@ -1,7 +1,9 @@
 # Architecture
 
-Kintsugi is a four-container system: a Next.js server, an Express API,
-PostgreSQL, and Redis — plus an optional fifth, a streaming Postgres standby.
+Kintsugi is a four-container system in its default setup: a Next.js server, an
+Express API, PostgreSQL, and Redis. Object storage joins them for photos, and
+three more are opt-in behind Compose profiles — a streaming Postgres standby
+(`ha`), and a Kafka broker with its relay and channel workers (`messaging`).
 The browser talks only to Next.js.
 
 ```mermaid
@@ -13,6 +15,8 @@ flowchart LR
     R[("Redis<br/><i>safe to lose</i>")]
     S[("Standby<br/><i>opt-in, read-only</i>")]
     F[["Object storage<br/><i>photos, read by the browser</i>"]]
+    K[/"Kafka<br/><i>opt-in, safe to lose</i>"/]
+    W["Channel workers<br/><i>email, push, SMS</i>"]
 
     B -->|HTTPS, session cookies| N
     N -->|"server-to-server<br/>cookies relayed"| E
@@ -21,10 +25,16 @@ flowchart LR
     E --> F
     B -.->|"img src only"| F
     P ==>|"streams WAL"| S
+    P -.->|"relay publishes<br/>committed outbox rows"| K
+    K -.-> W
+    W --> P
 ```
 
-The dotted line to Redis is the point: pull it out and the site is slower and
-still correct.
+The dotted lines are the point: pull Redis out and the site is slower and still
+correct; pull Kafka out and notifications queue in the outbox until it returns.
+Neither holds anything that must survive a restart — which is why the workers
+write their results *back* to Postgres rather than treating the broker as a
+record.
 
 Nothing points *at* the standby, and that is also the point. It is a spare
 primary, not a read replica — see
