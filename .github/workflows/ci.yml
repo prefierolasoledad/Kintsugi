@@ -89,9 +89,15 @@ jobs:
       #
       # Raise this only alongside a written reason. Lower it whenever the
       # refactor removes some.
+      #
+      # 36 -> 37 (delivery log). The admin delivery log added one instance: the
+      # same load-on-mount effect every other page in this list has. Its second
+      # one — resetting to page 1 when a filter changes — was NOT accepted; that
+      # page resets in the change handler instead, which is one render rather
+      # than two and is why the ceiling moved by one rather than two.
       - name: Lint frontend
         working-directory: frontend
-        run: npx eslint src --max-warnings 36
+        run: npx eslint src --max-warnings 37
 
       # Catches what tsc cannot: a bad import in a route handler, a client
       # component using a server-only API, a page that fails to prerender.
@@ -319,9 +325,20 @@ jobs:
         working-directory: backend
         run: npx playwright install --with-deps chromium
 
+      # RELAY_IN_PROCESS=false, and this is not optional.
+      #
+      # On the inline transport the API also ticks the outbox relay.
+      # tests/api/outbox.ts drives `relayOnce()` by hand and registers its spy
+      # consumer in the TEST process, so a relay running here claims the same
+      # rows and hands them to the API's consumers instead — the suite then
+      # reports "one event published — 0", which is true and tells you nothing.
+      #
+      # Nothing else in the suite needs it: the delivery suites call the
+      # consumer functions directly. The suite detects the clash and names this
+      # variable, so a green run does not depend on remembering the reason.
       - name: Start the API
         working-directory: backend
-        run: PORT=4000 npm start > "$RUNNER_TEMP/api.log" 2>&1 &
+        run: RELAY_IN_PROCESS=false PORT=4000 npm start > "$RUNNER_TEMP/api.log" 2>&1 &
 
       # `next start` does NOT work with output: standalone — Next says so and
       # exits. The standalone build is what the container ships, so CI runs it

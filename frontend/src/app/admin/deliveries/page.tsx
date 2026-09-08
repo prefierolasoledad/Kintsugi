@@ -71,9 +71,26 @@ function Deliveries() {
     load();
   }, [load]);
 
-  useEffect(() => {
+  /**
+   * Changing a filter resets to page one HERE, not in an effect.
+   *
+   * The effect version — `setPage(1)` whenever a filter changes — renders
+   * twice: once with the new filter against the old page number, then again
+   * corrected. Doing it at the source is one render, and it is one fewer
+   * setState-inside-an-effect for the lint ceiling to carry.
+   */
+  const pickChannel = (v: ChannelFilter) => {
+    setChannel(v);
     setPage(1);
-  }, [search, channel, status]);
+  };
+  const pickStatus = (v: StatusFilter) => {
+    setStatus(v);
+    setPage(1);
+  };
+  const pickQuery = (v: string) => {
+    setQ(v);
+    setPage(1);
+  };
 
   const rows = data?.rows ?? [];
   const counts = data?.byStatus ?? {};
@@ -97,7 +114,7 @@ function Deliveries() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs<ChannelFilter>
           value={channel}
-          onChange={setChannel}
+          onChange={pickChannel}
           options={[
             { key: "ALL", label: "All channels" },
             { key: "EMAIL", label: "Email" },
@@ -105,13 +122,13 @@ function Deliveries() {
             { key: "SMS", label: "SMS" },
           ]}
         />
-        <SearchBox value={q} onChange={setQ} placeholder="Email, name, or event id" />
+        <SearchBox value={q} onChange={pickQuery} placeholder="Email, name, or event id" />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <Tabs<StatusFilter>
           value={status}
-          onChange={setStatus}
+          onChange={pickStatus}
           options={[
             { key: "ALL", label: `Everything${data ? ` (${data.total})` : ""}` },
             { key: "SENT", label: `Sent${counts.SENT ? ` (${counts.SENT})` : ""}` },
