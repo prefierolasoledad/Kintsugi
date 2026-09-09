@@ -12,8 +12,8 @@ a Next.js storefront, an Express API, and PostgreSQL.
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
 > verification, email, web push, SMS, and an admin dashboard all work — covered by
-> **1,200 assertions across 33 suites** (`npm test`), run against the real stack
-> rather than mocks — 1,210 with a Kafka broker present, which unlocks the
+> **1,287 assertions across 35 suites** (`npm test`), run against the real stack
+> rather than mocks — 1,297 with a Kafka broker present, which unlocks the
 > broker-gated section of `retry-ladder`. Payments, identity and payouts run
 > against provider stubs or Stripe's test mode: no real money moves, no real
 > document is checked, and no seller has ever actually been paid. What is
@@ -58,6 +58,15 @@ docker compose --profile tools run --rm seed   # 7 categories, 27 listings, revi
 
 The storefront is on http://localhost:3000, the API on http://localhost:4000, and
 MinIO's console on http://localhost:9001 (`kintsugi` / `kintsugi-dev-secret`).
+
+**If you browsed before seeding, the category shelf stays empty for a few
+minutes.** Not a bug, and worth knowing before you go looking for one: the
+category list is read through a Redis cache, and the seed writes straight to
+Postgres — so nothing invalidates the entry that was cached while the database
+was still empty. It expires on its own. `docker compose restart redis` clears it
+immediately, or just seed first. Cache invalidation happens on writes *through
+the API* ([ADR 0019](docs/adr/0019-cache-tiering-rule.md)), which a one-shot
+seed job deliberately is not.
 
 **Two of the seven containers exit immediately, and that is correct.** `migrate`
 applies the migration history and `minio-init` creates the uploads bucket, both
@@ -107,7 +116,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**1,200 assertions across 33 suites**, and they drive the actual stack — a real
+**1,287 assertions across 35 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -380,7 +389,7 @@ Kintsugi/
 │   │   ├── middleware/ requireAuth, requireSeller, requireAdmin
 │   │   └── routes/     16 routers — auth, catalog, seller, orders,
 │   │                   reservations, payouts, admin, webhooks, and the rest
-│   └── tests/          33 suites: api/, browser/, and shared fixtures
+│   └── tests/          35 suites: api/, browser/, and shared fixtures
 ├── frontend/           Next.js storefront
 │   └── src/
 │       ├── app/        Routes, including BFF handlers under app/api/*

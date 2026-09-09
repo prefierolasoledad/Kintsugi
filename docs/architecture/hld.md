@@ -342,7 +342,7 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
   page. Denormalising onto `Listing` is the optimisation, at the cost of
   keeping it consistent.
 - **The suite needs the real stack, and takes about thirteen minutes.** Nothing
-  is mocked — 1,200 assertions across 33 suites drive a real Postgres, the real
+  is mocked — 1,287 assertions across 35 suites drive a real Postgres, the real
   Express API, and a production build of the storefront under a real browser. The
   cost of that choice is that `npm test` cannot run against nothing: it needs a
   database, a Redis, and both servers up. See

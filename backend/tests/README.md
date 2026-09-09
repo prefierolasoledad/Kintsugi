@@ -315,7 +315,7 @@ code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-1,200 assertions across 33 suites, all passing, in 775 seconds — measured with
+1,287 assertions across 35 suites, all passing, in 796 seconds — measured with
 Postgres, Redis, the API and a production frontend build all up, and with the
 outbox drained first (see above). Redis matters more than it looks: without
 `REDIS_URL` the `ratelimit` and `cache` suites skip most of their sections and
