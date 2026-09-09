@@ -15,6 +15,10 @@ for the schema and its invariants.
 
 **Integrating against the API?** [api.md](api.md).
 
+**Deploying it?** [k8s/README.md](../k8s/README.md) — the manifests, and an
+explicit list of what is verified on kind versus what has never run on a real
+cluster.
+
 **Wondering why something is built a certain way?** [adr/](adr/README.md). If the
 answer isn't there and the decision wasn't obvious, that's a gap worth filling.
 

@@ -1,6 +1,9 @@
 # 32. Kubernetes: an operator for Postgres, plain manifests for everything else
 
-- **Status:** Proposed — no manifests exist yet. See
+- **Status:** Accepted — implemented 2026-09-09 in [`k8s/`](../../k8s/), with
+  `src/jobs.ts` as the entrypoint the CronJob calls. Verified on kind:
+  failover promoted a replica with committed data intact and zero API
+  restarts. **Nothing has run on a real cluster.** See
   [plan 0004](../plans/0004-kubernetes.md).
 - **Recorded:** 2026-09-09
 
@@ -159,10 +162,9 @@ Dockerfiles, and it does not have an equivalent answer here. Compose stays the
 development story and the manifests the deployment one; where they disagree
 about anything but topology, the manifests are wrong.
 
-**`dist/jobs.js` does not exist yet.** The sweepers are library exports with no
-entrypoint — `src/index.ts`, `src/relay.ts` and `src/worker.ts` are the only
-compiled entrypoints. A CronJob needs a command, so one has to be built, and it
-is phase 1 of the plan rather than a detail of the manifests.
+**`dist/jobs.js` was built for this**, since the sweepers were library exports
+with no entrypoint. It needed no Dockerfile change: `api-build` compiles
+everything in `src`, so it shipped in the existing image.
 
 **Liveness for the relay and the worker is unsolved.** Neither serves HTTP, so
 they inherit no probe — ADR 0023 already noted that a real signal is consumer

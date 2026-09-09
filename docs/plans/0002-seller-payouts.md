@@ -315,8 +315,14 @@ transfer, and the line paid exactly once.
 ## 5. What this does not do
 
 **No payout scheduling.** A payout is triggered by a seller or an admin, not by
-a cron. Compose has no scheduler and inventing one with a sleep loop would be a
-worse cron than cron — the same reasoning that left backup retention unbuilt.
+a cron. Compose has no scheduler, and a `setInterval` in the process serving
+checkout is the wrong place for something that calls Stripe.
+
+*Since revisited, and the distinction is worth keeping straight.* The
+Kubernetes deployment does have one scheduled job
+([ADR 0032](../adr/0032-kubernetes-manifests.md)) and it does not undo this:
+`payouts:pending` settles payouts already claimed by a request that never
+reached the provider. Nothing has ever begun a payout on a timer.
 
 **No debt collection.** A shortfall is netted off the next payout and nothing
 else. A seller who never sells again keeps the money.

@@ -68,12 +68,17 @@ end — the buyer can escalate to a moderator, who decides. That is the same sha
 as reports and moderation, which already exist and already write audit rows
 ([ADR 0015](0015-admin-by-cli-grant-and-step-up.md)).
 
-**No timer anywhere in it.** An unanswered request does not auto-approve after n
-days, because this deployment has no scheduler and inventing one with a
-`setInterval` would be a worse cron than cron — the same reasoning that left
-outbox retention unscheduled ([ADR 0024](0024-outbox-not-dual-writes.md)). A
-buyer whose seller stays silent escalates; that is a button they press, not a
-deadline the system keeps.
+**No timer anywhere in it.** An unanswered request does not auto-approve after
+n days. A buyer whose seller stays silent escalates; that is a button they
+press, not a deadline the system keeps.
+
+*The reason has changed since this was written and the decision has not.* At the
+time the argument was that there was nowhere to run a schedule.
+[ADR 0032](0032-kubernetes-manifests.md) has since added a CronJob, so that
+argument is gone — and expiring a return on a timer is still wrong, because it
+would decide a dispute by clock rather than by anybody looking at it. Auto-
+approving takes a seller's money without a decision; auto-rejecting takes the
+buyer's. Neither is a default worth having.
 
 ### The return window defaults to the payout hold, and boot says so if they diverge
 

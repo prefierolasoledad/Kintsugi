@@ -305,26 +305,42 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
   that finishes those claims is written and covered, and has to be invoked — by
   an operator or a cron, like outbox retention and the stale-delivery sweep.
   Compose has no scheduler.
-- **Failover is manual, and nothing is automatically replaced.** Both tiers can
-  now run more than one replica — rate limits and the cache are in Redis
+- **Failover is manual under Compose, and automatic under Kubernetes.** Both
+  tiers can run more than one replica — rate limits and the cache are in Redis
   ([ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md),
   [ADR 0019](../adr/0019-cache-tiering-rule.md)), the refresh race is settled in
   Postgres ([ADR 0021](../adr/0021-refresh-race-grace-window.md)), and uploads
   are in shared object storage
-  ([ADR 0022](../adr/0022-object-storage-for-uploads.md)). What is missing is
-  anything that *notices* a dead instance and replaces it, which is an
-  orchestrator's job rather than the application's.
+  ([ADR 0022](../adr/0022-object-storage-for-uploads.md)). What Compose has
+  never had is anything that *notices* a dead instance and replaces it.
+
+  [The manifests](../../k8s/) close that half:
+  [ADR 0032](../adr/0032-kubernetes-manifests.md) runs Postgres as a
+  CloudNativePG `Cluster`, and killing the primary on a kind cluster promoted a
+  replica, after which a write succeeded through the BFF with **zero API
+  restarts** — Prisma's pool followed the `-rw` Service to the new primary.
+  Measured on one node with no spare memory, so the ~2.5 minutes it took is not
+  a figure worth quoting.
+
+  **Compose remains the development story and gains nothing from this.** A
+  single `docker compose up` cannot promote anything, and that is still the
+  right trade for a machine you are writing code on.
 - **Search is substring matching** (`ILIKE '%q%'`), which cannot use a B-tree
   index, so every search is a sequential scan. Fine at this size; a Postgres
   `tsvector` index with ranking is the upgrade path.
 - **Pagination is offset-based.** Simple and right for numbered result pages;
   deep offsets degrade.
-- **Backups are not scheduled or retained.** WAL archiving and point-in-time
-  recovery work and the restore is rehearsed
+- **Backups are still not scheduled or retained**, in either deployment. WAL
+  archiving and point-in-time recovery work and the restore is rehearsed
   ([ADR 0020](../adr/0020-replication-and-backups.md)), but base backups are
-  taken on demand and nothing expires old ones. Compose has no scheduler, and
-  inventing one with a sleep loop would be a worse cron than cron — it is a
-  CronJob in Kubernetes, and CloudNativePG does retention and verification too.
+  taken on demand and nothing expires old ones.
+  [The Kubernetes manifests](../../k8s/) narrow this rather than close it: the
+  CloudNativePG `Cluster` is where a `barmanObjectStore` with a
+  `retentionPolicy` belongs — one block, doing scheduling, retention and
+  verification — and `k8s/base/postgres-cluster.yaml` deliberately leaves it
+  out, because it needs a bucket and credentials that differ per environment
+  and no overlay here has them. So the mechanism has a home and no deployment
+  uses it yet.
 - **Nothing reads from the replica**, deliberately. Routing reads to a standby
   introduces read-your-writes bugs — a buyer landing on an order list that has
   not replayed their order — and the caching in

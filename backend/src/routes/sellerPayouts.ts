@@ -19,9 +19,15 @@ import { earningsSummary, holdDays, payableItems, runPayout } from "../lib/payou
  * ADR 0029 — so nothing here touches checkout. These endpoints let a seller
  * connect an account, see what they are owed and why, and trigger the transfer.
  *
- * NO SCHEDULE. A payout is requested by a seller or an admin, never by a timer.
- * Compose has no scheduler and a sleep loop would be a worse cron than cron —
- * the same reasoning that left backup retention unbuilt.
+ * NOTHING SCHEDULES A PAYOUT. It is requested by a seller or an admin, never
+ * begun by a timer, and that is a product decision rather than a missing
+ * feature — a seller decides when to take their money.
+ *
+ * There IS a scheduled job in the Kubernetes deployment, and it does not
+ * contradict this: `payouts:pending` FINISHES payouts that were already
+ * claimed by a request here and never transferred, because the claim commits
+ * before the provider call (ADR 0029). It settles; it never initiates.
+ * See docs/adr/0032-kubernetes-manifests.md
  */
 export const sellerPayoutsRouter = Router();
 

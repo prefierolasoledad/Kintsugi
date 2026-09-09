@@ -42,7 +42,7 @@ a Next.js storefront, an Express API, and PostgreSQL.
 | Images | Sharp (re-encode + metadata stripping) |
 | Uploads | S3-compatible object storage (MinIO locally), or local disk |
 | Backups | WAL archiving + base backups to object storage, PITR, a rehearsed restore |
-| Delivery | Multi-stage Docker builds, Compose, GitHub Actions CI |
+| Delivery | Multi-stage Docker builds, Compose, Kustomize manifests with CloudNativePG, GitHub Actions CI |
 
 ## Quick start
 
@@ -355,6 +355,34 @@ What it does **not** prove: nothing here reached Stripe. Every transfer above
 was issued by the stub, so this demonstrates the claim ordering and the
 constraint — not that Connect behaves as assumed.
 
+```bash
+./k8s/failover-demo.sh
+```
+
+Deletes the Postgres primary and counts what it cost. Verified on kind:
+
+```
+  promotion took           199s
+  write after failover     HTTP 201
+  rows found in the new primary  2 of 2  (one written before, one after)
+  api restarts             0 -> 0
+```
+
+*Two of two is the number that matters.* A storefront returning 200 proves
+nothing — a cached page does that with no database at all. So a row is written
+**before** the kill and another **after** it, and both are read back out of the
+promoted instance by name.
+
+*Zero restarts is the other one.* Prisma's pool followed the `-rw` Service to the
+new primary on its own. Had it cached the old address, an orchestrator would
+have restarted the pod and the demo would have passed while hiding the
+interesting part — which is why the restart count is measured rather than
+assumed.
+
+199 seconds is slow, on one node with no free memory, and the script prints it
+rather than smoothing it over. A promotion is a short automatic outage, not an
+invisible one.
+
 ## Documentation
 
 The README stays deliberately short. Everything else lives in [`docs/`](docs/):
@@ -366,7 +394,8 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 31 ADRs on why things are built the way they are, all accepted |
+| [Decision records](docs/adr/README.md) | 32 ADRs on why things are built the way they are, all accepted |
+| [Kubernetes](k8s/README.md) | The manifests, what is verified on kind, and what is not |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
@@ -396,6 +425,7 @@ Kintsugi/
 │       ├── components/ UI, including the admin dashboard
 │       └── lib/        API clients, auth context, catalog helpers
 ├── docker/             Postgres replication and backups, MinIO bootstrap
+├── k8s/                Kustomize manifests, a CloudNativePG cluster, one CronJob
 ├── docs/               Architecture, ADRs, API reference
 ├── Dockerfile          Every image: targets api, web, api-build
 └── docker-compose.yml  postgres, redis, minio, migrate, seed, api, web
@@ -536,11 +566,17 @@ never learns the backend's address. See
   state nothing in the request path can reach is a different job from moving
   money on a timer.
 
-- **Kubernetes.** Compose is the deployment story today, and nothing promotes
-  the standby or replaces a dead instance — that is an orchestrator's job.
-  CloudNativePG expresses the replication and the backups from
-  [ADR 0020](docs/adr/0020-replication-and-backups.md) as a few lines of YAML,
-  including the scheduling and retention this deliberately does not do.
+  **The payout half is closed under Kubernetes**, where `payouts:pending` is a
+  CronJob ([ADR 0032](docs/adr/0032-kubernetes-manifests.md)) — the one
+  scheduled job in the system, and scheduled precisely because it calls a
+  payment provider. Backups are still unscheduled in both deployments.
+
+- **A real cluster.** [The manifests exist](k8s/) and are verified on kind —
+  failover promoted a replica with committed data intact and zero API restarts
+  ([ADR 0032](docs/adr/0032-kubernetes-manifests.md)). What has not happened is
+  a cloud: a manifest that applies on kind can still be wrong about a load
+  balancer, an ingress class or a storage class, and the messaging overlay
+  (Kafka, relay, worker) is not written at all.
 
 Placeholder screens say so explicitly rather than presenting controls that
 don't work.
