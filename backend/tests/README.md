@@ -355,10 +355,16 @@ their sections and report 10 and 8 instead of 25 and 44 — 51 assertions that
 look like they ran and did not.
 
 *The payment and identity providers.* Against Stripe test mode the same suites
-report **1,293**: `identity` gains 3, `identity-stale` 7, and `browser-identity`
-20, because the sections asserting real Stripe behaviour stop skipping. A higher
-number is not a better run — it is a different one, and the stub figure is the
-one quoted everywhere else because it is what a fresh checkout and CI produce.
+report **1,293 in 901 seconds** — also measured, not extrapolated from the
+first. `identity` gains 3, `identity-stale` 7 and `browser-identity` 20, because
+the sections asserting real Stripe behaviour stop skipping.
+
+A higher number is not a better run, it is a different one. The stub figure is
+the one quoted everywhere else, because it is what a fresh checkout and CI
+produce — and quoting a number a reader cannot reproduce is worse than quoting a
+smaller one. That mistake was made here: the README carried 1,287 for a while,
+which was a local Stripe-mode measurement at a time when `.env.example` shipped
+stub.
 
 | Suite | Covers |
 |---|---|

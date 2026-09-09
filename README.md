@@ -521,10 +521,20 @@ never learns the backend's address. See
   decisions still open: who absorbs Connect's per-transfer and per-account fees
   on a platform taking no cut, and whether seven days is the right hold.
 
-- **Anything that runs on a timer.** Payout retries, outbox retention and the
-  stale-delivery sweep are written, tested and exported — and every one of them
-  has to be invoked by something else. Compose has no scheduler, and a
-  `setInterval` in a web process is a worse cron than cron.
+- **Two things that should run on a schedule and do not.** A payout that was
+  claimed and never sent — the provider timed out — stays `PENDING` until
+  somebody calls `sendPendingPayouts()`, and nothing does. And base backups are
+  taken on demand with nothing expiring the old ones
+  ([ADR 0020](docs/adr/0020-replication-and-backups.md)). Both are a `CronJob`
+  in Kubernetes; neither is a reason to put a `setInterval` in a web process.
+
+  **The recovery sweepers, by contrast, already run** — reservations, in-flight
+  orders, quiet-hours deliveries, stale deliveries and outbox retention all
+  start with the API ([`src/index.ts`](backend/src/index.ts)). That is not a
+  contradiction of the line above: each claims its work with a conditional
+  `UPDATE`, so N replicas divide it rather than doing it N times. Recovering
+  state nothing in the request path can reach is a different job from moving
+  money on a timer.
 
 - **Kubernetes.** Compose is the deployment story today, and nothing promotes
   the standby or replaces a dead instance — that is an orchestrator's job.

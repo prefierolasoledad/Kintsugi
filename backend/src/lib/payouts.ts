@@ -515,7 +515,7 @@ export async function sendClaimedPayout(payoutId: string) {
      * hold the same transferId, because Stripe's idempotency key gave them the
      * same transfer.
      */
-    await prisma.payout.updateMany({
+    const settledHere = await prisma.payout.updateMany({
       where: { id: payout.id, status: PayoutStatus.PENDING },
       data: {
         status: PayoutStatus.PAID,
@@ -529,6 +529,21 @@ export async function sendClaimedPayout(payoutId: string) {
       payoutId: payout.id,
       amountCents: payout.amountCents,
       transferId: result.transferId,
+      /**
+       * WHETHER THIS CALLER WAS THE ONE THAT SETTLED IT, which is not the same
+       * question as whether it succeeded.
+       *
+       * The status check at the top of this function is a read, so two workers
+       * can both pass it and both call `transfer()`. That is safe — they get
+       * the same transfer back, by idempotency key — and both of them
+       * legitimately return `sent: true`. But only one `updateMany` matches a
+       * row, and the other's count is 0.
+       *
+       * Exposed because `sendPendingPayouts` runs as a scheduled job whose log
+       * line is the whole interface an operator has. Two overlapping runs
+       * reporting `sent=1` each reads as two payouts; it was one.
+       */
+      settled: settledHere.count === 1,
     };
   } catch (err) {
     const permanent = err instanceof PayoutError && err.permanent;
@@ -575,12 +590,39 @@ export async function sendPendingPayouts(limit = 25) {
 
   let sent = 0;
   let failed = 0;
+  let raced = 0;
+
   for (const p of pending) {
     const outcome = await sendClaimedPayout(p.id);
-    if (outcome.sent) sent += 1;
-    else failed += 1;
+    if (outcome.sent) {
+      // `settled` distinguishes "this run sent it" from "this run watched
+      // another run send it and got the same transfer back".
+      if (outcome.settled) sent += 1;
+      else raced += 1;
+    } else if (outcome.reason === "already-settled" || outcome.reason === "no-such-payout") {
+      /**
+       * SOMEBODY ELSE GOT THERE FIRST, which is not a failure.
+       *
+       * Counted separately because this runs as a scheduled job, and its
+       * output is the whole interface an operator has. Two workers overlapping
+       * — a CronJob firing while a seller presses the button — is the ordinary
+       * case, and reporting it as `failed` trains whoever reads the logs to
+       * ignore the number that matters. Seen for real in a kind cluster: two
+       * concurrent Jobs reported `sent=1` and `failed=1`, and the second was
+       * correct behaviour.
+       *
+       * This branch catches the SLOWER overlap, where the second worker starts
+       * after the first has settled the row. The faster one — both inside
+       * `transfer()` at once — lands on `sent: true, settled: false` above,
+       * which is why that flag exists.
+       */
+      raced += 1;
+    } else {
+      failed += 1;
+    }
   }
-  return { sent, failed, considered: pending.length };
+
+  return { sent, failed, raced, considered: pending.length };
 }
 
 /* ------------------------------------------------------------------ *

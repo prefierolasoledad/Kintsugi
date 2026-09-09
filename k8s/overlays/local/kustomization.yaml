@@ -1,0 +1,91 @@
+# kind, for verifying the manifests actually run.
+#
+# WHAT MAKES THIS "LOCAL" RATHER THAN "SMALL": no Ingress controller and no
+# real DNS. The base's Ingress needs a controller kind does not ship, so this
+# replaces it with a NodePort on `web` and maps that to the host in
+# kind-cluster.yaml. Everything else is the base.
+#
+# The Secret here is generated with values that are NOT secret, and says so.
+# The base refuses to default them (ADR 0032); a local overlay providing
+# obviously-fake ones is not the same thing as the base pretending they are
+# optional.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kintsugi
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - web-nodeport.yaml
+
+# Ingress needs a controller kind has none of. Dropped here rather than moved
+# out of the base, because a real cluster does want it.
+patches:
+  - target:
+      kind: Ingress
+      name: kintsugi
+    patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: kintsugi
+  # One of each: 11GB of RAM, and a kind node sharing it with the browser that
+  # is reading this.
+  - target:
+      kind: Deployment
+      name: "api|web"
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # One Postgres instance, not three. Failover is worth demonstrating and needs
+  # at least two — but three 256Mi instances plus the operator plus the app on
+  # an 11GB laptop is how a kind cluster gets OOM-killed halfway through a
+  # verification. Raised to 2 by hand when testing promotion.
+  - target:
+      kind: Cluster
+      name: postgres
+    patch: |
+      - op: replace
+        path: /spec/instances
+        value: 1
+
+secretGenerator:
+  # CNPG's initdb reads `username`/`password` from a basic-auth Secret, which
+  # is a different shape from the application's env-var Secret. Two Secrets,
+  # one password — kept in step here rather than in two places.
+  - name: postgres-credentials
+    type: kubernetes.io/basic-auth
+    literals:
+      - username=kintsugi
+      - password=kintsugi
+  - name: kintsugi-secrets
+    literals:
+      # Local only, and deliberately unmistakable. A leaked value that reads
+      # like a password is worse than one that reads like a placeholder.
+      - DATABASE_URL=postgresql://kintsugi:kintsugi@postgres-rw:5432/kintsugi
+      - JWT_SECRET=kind-local-not-a-real-secret-0000000000
+      - S3_ACCESS_KEY=kintsugi
+      - S3_SECRET_KEY=kintsugi-local-not-a-secret
+
+configMapGenerator:
+  - name: kintsugi-config
+    behavior: merge
+    literals:
+      # The two the base refuses to guess. The browser reaches MinIO and the
+      # site through the host ports kind maps.
+      - S3_PUBLIC_BASE=http://localhost:9000/kintsugi-uploads
+      - FRONTEND_ORIGIN=http://localhost:30000
+
+images:
+  - name: kintsugi-api
+    newName: kintsugi-api
+    newTag: local
+  - name: kintsugi-web
+    newName: kintsugi-web
+    newTag: local
+  - name: kintsugi-migrate
+    newName: kintsugi-migrate
+    newTag: local
