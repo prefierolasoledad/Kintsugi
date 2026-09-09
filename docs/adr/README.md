@@ -47,11 +47,14 @@ the old one, rather than an edit.
 | [0028](0028-sms-provider-twilio-behind-a-seam.md) | Twilio for SMS, behind the same seam as payments and identity | Accepted |
 | [0029](0029-payouts-separate-transfers-not-destination-charges.md) | Pay sellers with separate transfers, not destination charges | Accepted |
 | [0030](0030-payout-eligibility-and-hold.md) | What makes money payable, and the ledger that stops it being paid twice | Accepted |
+| [0031](0031-buyer-initiated-returns.md) | Buyer-initiated returns, as a request the seller answers | Accepted |
 
-> **All thirty are implemented.** 0024 and 0025 landed with phase 1 of
+> **All thirty-one are implemented.** 0024 and 0025 landed with phase 1 of
 > [plan 0001](../plans/0001-multi-channel-notifications.md), 0026 and 0027 with
 > phases 2-4, and 0028 with phase 4. 0029 and 0030 were Proposed for one day and
-> landed with [plan 0002](../plans/0002-seller-payouts.md).
+> landed with [plan 0002](../plans/0002-seller-payouts.md), and 0031 with
+> [plan 0003](../plans/0003-buyer-returns.md) the following day — it is the
+> entry point the refund machinery had been missing since 0016.
 >
 > **Accepted is not the same as proven against a provider.** The payout path in
 > 0029 and 0030 is exercised end to end under `PAYOUT_PROVIDER=stub` and nothing

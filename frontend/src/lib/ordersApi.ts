@@ -47,7 +47,7 @@ export type ShipTo = {
 };
 
 export type RefundStatus = "PENDING" | "SUCCEEDED" | "FAILED";
-export type RefundTrigger = "SELLER_UNFULFILLABLE" | "ADMIN";
+export type RefundTrigger = "SELLER_UNFULFILLABLE" | "ADMIN" | "BUYER_RETURN";
 
 export type Refund = {
   id: string;
@@ -134,6 +134,81 @@ export function getOrder(orderId: string) {
 /** Every refund this buyer has received, newest first. */
 export function getMyRefunds() {
   return request<{ refunds: MyRefund[] }>("/refunds");
+}
+
+/* ------------------------------------------------------------------ *
+ * Returns
+ * ------------------------------------------------------------------ */
+
+export type ReturnStatus =
+  | "OPEN"
+  | "APPROVED"
+  | "REFUSED"
+  | "ESCALATED"
+  | "REJECTED"
+  | "WITHDRAWN";
+
+export type MyReturn = {
+  id: string;
+  orderItemId: string;
+  orderId: string;
+  status: ReturnStatus;
+  /** The buyer's own words. */
+  reason: string;
+  notAsDescribed: boolean;
+  /** The answer, in the answerer's words. Null while OPEN. */
+  decisionNote: string | null;
+  decidedAt: string | null;
+  refundId: string | null;
+  createdAt: string;
+  title: string;
+  amountCents: number;
+  sellerName: string | null;
+  deliveredAt: string | null;
+  orderReference: string | null;
+};
+
+/**
+ * Whether a line can be returned, asked before the control is offered.
+ *
+ * `eligible: false` is a 200, not an error: "the window closed on the 14th" is
+ * an answer, and the page shows it instead of a button that would fail.
+ */
+export type ReturnEligibility =
+  | { eligible: true; title: string; amountCents: number; deadline: string; windowDays: number }
+  | {
+      eligible: false;
+      code: string;
+      error: string;
+      deadline: string | null;
+      windowDays: number;
+    };
+
+export function checkReturnEligibility(orderItemId: string) {
+  return request<ReturnEligibility>(`/items/${orderItemId}/return`);
+}
+
+export function getMyReturns() {
+  return request<{ returns: MyReturn[]; windowDays: number }>("/returns");
+}
+
+export function startReturn(
+  orderItemId: string,
+  input: { reason: string; notAsDescribed: boolean }
+) {
+  return request<{ id: string; deadline: string }>(`/items/${orderItemId}/return`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function withdrawReturn(id: string) {
+  return request<{ status: ReturnStatus }>(`/returns/${id}/withdraw`, { method: "POST" });
+}
+
+/** Asks a moderator to look at a refusal. Only valid on a REFUSED return. */
+export function escalateReturn(id: string) {
+  return request<{ status: ReturnStatus }>(`/returns/${id}/escalate`, { method: "POST" });
 }
 
 export function confirmDelivery(orderItemId: string) {

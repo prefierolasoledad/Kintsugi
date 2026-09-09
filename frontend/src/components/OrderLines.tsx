@@ -2,11 +2,18 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { formatPrice } from "@/lib/catalog";
-import { confirmDelivery, type Order, type OrderItem } from "@/lib/ordersApi";
+import {
+  confirmDelivery,
+  getMyReturns,
+  type MyReturn,
+  type Order,
+  type OrderItem,
+} from "@/lib/ordersApi";
 import { BUYER_FULFILMENT_LABEL } from "@/lib/salesApi";
+import ReturnControl from "./ReturnControl";
 
 /**
  * The lines of an order, shared by the payment page and the receipt.
@@ -27,10 +34,46 @@ export default function OrderLines({
   /** Called after a delivery confirmation, so the parent can re-read. */
   onChanged?: () => void;
 }) {
+  const [returns, setReturns] = useState<MyReturn[]>([]);
+
+  /**
+   * Fetched here rather than passed in, so neither the payment page nor the
+   * receipt has to know returns exist. One request for the whole order instead
+   * of one per line: `GET /orders/returns` is already the buyer's whole list.
+   */
+  const loadReturns = useCallback(async () => {
+    try {
+      setReturns((await getMyReturns()).returns);
+    } catch {
+      // A return list that will not load must not break the receipt. The
+      // control simply does not appear, which is the same as having none.
+    }
+  }, []);
+
+  /**
+   * Only once money has moved. Nothing is returnable on an unpaid order, so
+   * asking would be a request that can only answer "none".
+   */
+  const settled = order.status === "PAID" || order.status === "REFUNDED";
+  useEffect(() => {
+    if (settled) void loadReturns();
+  }, [settled, loadReturns]);
+
+  const changed = useCallback(() => {
+    void loadReturns();
+    onChanged?.();
+  }, [loadReturns, onChanged]);
+
   return (
     <ul className="grid gap-5">
       {order.items.map((item) => (
-        <Line key={item.id} item={item} order={order} onChanged={onChanged} />
+        <Line
+          key={item.id}
+          item={item}
+          order={order}
+          onChanged={changed}
+          existingReturn={returns.find((r) => r.orderItemId === item.id)}
+        />
       ))}
     </ul>
   );
@@ -40,10 +83,12 @@ function Line({
   item,
   order,
   onChanged,
+  existingReturn,
 }: {
   item: OrderItem;
   order: Order;
   onChanged?: () => void;
+  existingReturn?: MyReturn;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,11 +155,15 @@ function Line({
                 <p className="text-xs text-clay">
                   {item.fulfilmentNote ?? "The seller couldn't send this."}
                 </p>
-                {/* Said plainly rather than implying it's handled — refunds
-                    genuinely aren't built. */}
+                {/*
+                  This used to say refunds "aren't automated yet", which stopped
+                  being true when the seller-unfulfillable path started issuing
+                  one automatically — the buyer was being told to chase a seller
+                  for money already on its way back.
+                */}
                 <p className="mt-1 text-xs text-ink-dim">
-                  You paid for this. Refunds aren&apos;t automated yet, so this
-                  needs settling with the seller directly.
+                  You&apos;ve been refunded for this automatically. It can take a
+                  few days to show on your statement.
                 </p>
               </div>
             )}
@@ -137,6 +186,22 @@ function Line({
               <p className="mt-1.5 text-xs text-ink-dim">
                 Confirmed {new Date(item.deliveredAt).toLocaleDateString()}
               </p>
+            )}
+
+            {/*
+              Returns start from the buyer's own delivery confirmation, so the
+              control only exists once that has happened — which is also what
+              starts the window the seller's payout hold is measured against.
+              An existing request replaces the button with its own state.
+            */}
+            {(item.fulfilment === "DELIVERED" || existingReturn) && (
+              <ReturnControl
+                orderItemId={item.id}
+                amountCents={item.unitPriceCents * item.quantity}
+                currency={order.currency}
+                existing={existingReturn}
+                onChanged={onChanged}
+              />
             )}
           </div>
         )}

@@ -29,6 +29,7 @@ import {
   suspendUser,
 } from "../lib/moderation";
 import { RefundError, issueRefund, refundableCents, refundsForOrder } from "../lib/refunds";
+import { approveReturn, refuseReturn } from "../lib/returns";
 import {
   attention,
   customerDetail,
@@ -41,6 +42,7 @@ import {
   topSellers,
   listDeliveries,
   listPayouts,
+  listReturns,
   type Range,
 } from "../lib/adminStats";
 import {
@@ -272,8 +274,16 @@ adminRouter.use(requireAdmin);
 
 adminRouter.get("/overview", async (_req, res) => {
   try {
-    const [reports, listings, activeListings, users, suspended, orders, paidOrders] =
-      await Promise.all([
+    const [
+      reports,
+      listings,
+      activeListings,
+      users,
+      suspended,
+      orders,
+      paidOrders,
+      escalatedReturns,
+    ] = await Promise.all([
         reportCounts(),
         prisma.listing.count(),
         prisma.listing.count({ where: { status: "ACTIVE", deletedAt: null } }),
@@ -281,6 +291,13 @@ adminRouter.get("/overview", async (_req, res) => {
         prisma.user.count({ where: { suspendedAt: { not: null } } }),
         prisma.order.count(),
         prisma.order.count({ where: { status: "PAID" } }),
+        /**
+         * Badged in the nav, so it is on this endpoint rather than only on the
+         * dashboard: an escalated return is a buyer waiting on a human, nothing
+         * in the system will ever move it on its own, and a moderator should
+         * not have to open a page to find out one is waiting.
+         */
+        prisma.returnRequest.count({ where: { status: "ESCALATED" } }),
       ]);
 
     res.json({
@@ -288,6 +305,7 @@ adminRouter.get("/overview", async (_req, res) => {
       catalogue: { total: listings, active: activeListings },
       accounts: { total: users, suspended },
       orders: { total: orders, paid: paidOrders },
+      returns: { escalated: escalatedReturns },
     });
   } catch (err) {
     fail(res, err, "Could not load the overview.");
@@ -621,6 +639,94 @@ adminRouter.get("/payouts", async (req, res) => {
     );
   } catch (err) {
     fail(res, err, "Could not load the payout log.");
+  }
+});
+
+/**
+ * Return requests, and the escalations that need settling.
+ *
+ * This is the only place an ESCALATED request can be seen: the buyer asked for
+ * money back, the seller refused, and somebody impartial has to decide. A
+ * seller sees only their own requests and a buyer only theirs, so without this
+ * an escalation would be a state nothing could act on.
+ */
+adminRouter.get("/returns", async (req, res) => {
+  try {
+    const status = z
+      .enum(["ALL", "OPEN", "APPROVED", "REFUSED", "ESCALATED", "REJECTED", "WITHDRAWN"])
+      .catch("ALL")
+      .parse(req.query.status ?? "ALL");
+
+    res.json(await listReturns({ q: queryParam(req), status, page: pageParam(req) }));
+  } catch (err) {
+    fail(res, err, "Could not load the returns.");
+  }
+});
+
+/**
+ * A moderator settling one, either way.
+ *
+ * `allowEscalated` is set here and nowhere else: a moderator can answer a
+ * request the seller has already refused, which is the entire point of
+ * escalation, and the seller's own route deliberately cannot.
+ *
+ * A rejection here is TERMINAL — `REJECTED`, not `REFUSED` — so the buyer
+ * cannot escalate the same request to a second moderator.
+ *
+ * THE AUDIT TRAIL IS ON THE ROWS, not in ModerationAction. `decidedById` and
+ * `decidedAt` record who settled it, and an approval also writes a Refund
+ * carrying `initiatedById`. That is the same arrangement as the admin refund
+ * route beside it, and duplicating it into the moderation log would give two
+ * records of one act that could disagree.
+ */
+adminRouter.post("/returns/:id/decide", async (req, res) => {
+  try {
+    const parsed = z
+      .object({ approve: z.boolean(), note: z.string().trim().max(2000).optional() })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid input", code: "INVALID_INPUT" });
+    }
+
+    const outcome = parsed.data.approve
+      ? await approveReturn({
+          id: req.params.id,
+          decidedById: req.userId!,
+          note: parsed.data.note ?? null,
+          allowEscalated: true,
+        })
+      : await refuseReturn({
+          id: req.params.id,
+          decidedById: req.userId!,
+          note: parsed.data.note ?? "",
+          terminal: true,
+        });
+
+    if (outcome.done) return res.json({ status: outcome.status, refundId: outcome.refundId });
+
+    if (outcome.reason === "note-required") {
+      return res.status(400).json({
+        error: "Say why. The buyer and the seller both see this.",
+        code: "NOTE_REQUIRED",
+      });
+    }
+    if (outcome.reason === "wrong-state") {
+      return res.status(409).json({
+        error: "That return has already been settled.",
+        code: "WRONG_STATE",
+        status: outcome.detail,
+      });
+    }
+    if (outcome.reason === "refund-failed") {
+      return res.status(502).json({
+        error: "The refund could not be issued, so the return is still open.",
+        code: "REFUND_FAILED",
+        detail: outcome.detail,
+      });
+    }
+    res.status(404).json({ error: "No such return.", code: "NOT_FOUND" });
+  } catch (err) {
+    fail(res, err, "Could not settle that return.");
   }
 });
 

@@ -38,7 +38,7 @@ const COLUMNS = [
     lines: [
       { label: "How it works", href: "/sell/how-it-works" },
       { label: "Seller fees", href: "/sell/seller-fees" },
-      { label: "Shipping labels", href: "/sell/shipping-labels" },
+      { label: "Shipping", href: "/sell/shipping-labels" },
       { label: "Payouts", href: "/sell/payouts" },
     ],
   },

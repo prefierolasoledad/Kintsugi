@@ -2,7 +2,6 @@ import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
 import { TOPICS, kafka } from "../src/lib/kafka";
 import {
-  ATTEMPT_HEADER,
   ERROR_HEADER,
   GROUP_HEADER,
   ORIGIN_HEADER,

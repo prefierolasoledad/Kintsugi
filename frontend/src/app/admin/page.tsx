@@ -57,7 +57,11 @@ function Dashboard() {
 
   const needs = data.attention;
   const totalNeeds =
-    needs.openReports + needs.unfulfilledOver3Days + needs.stuckPayments + needs.rejectedKyc;
+    needs.openReports +
+    needs.escalatedReturns +
+    needs.unfulfilledOver3Days +
+    needs.stuckPayments +
+    needs.rejectedKyc;
 
   return (
     <div className="grid gap-5">
@@ -120,13 +124,28 @@ function Dashboard() {
 
         <Card title="Needs attention">
           {totalNeeds === 0 && needs.failedPayments === 0 ? (
-            <EmptyState title="Nothing waiting" body="No open reports, no late parcels, no stuck payments." />
+            <EmptyState
+              title="Nothing waiting"
+              body="No open reports, no disputed returns, no late parcels, no stuck payments."
+            />
           ) : (
             <ul className="divide-y divide-line">
               <Attention
                 count={needs.openReports}
                 label="Open reports"
                 href="/admin/reports"
+                tone="bad"
+              />
+              {/*
+                First among equals in urgency: a buyer has disputed a seller's
+                refusal and nothing in the system will ever move it on its own.
+                There is no timer here, deliberately, so this count is the only
+                thing that surfaces one.
+              */}
+              <Attention
+                count={needs.escalatedReturns}
+                label="Returns needing a decision"
+                href="/admin/returns"
                 tone="bad"
               />
               <Attention

@@ -22,6 +22,15 @@ import {
   normaliseCardNumber,
 } from "../lib/paymentProvider";
 import { SalesError, markDelivered } from "../lib/sales";
+import {
+  eligibility,
+  escalateReturn,
+  openReturn,
+  returnWindowDays,
+  returnsForBuyer,
+  withdrawReturn,
+} from "../lib/returns";
+import { checkRateLimit } from "../lib/rateLimit";
 import { requireAuth } from "../middleware/requireAuth";
 import { OrderStatus } from "../generated/prisma/enums";
 
@@ -129,6 +138,192 @@ ordersRouter.get("/", async (req, res) => {
  * swapped the request would be read as an order whose id is the string
  * "refunds" and answered with a 404.
  */
+/* ------------------------------------------------------------------ *
+ * Returns
+ *
+ * The buyer's side. Mounted here rather than behind a router of its own
+ * deliberately: a second router at the same mount point is how the payout gate
+ * came to 500 every sibling route under `/seller`, and there is nothing about
+ * returns that needs its own mount.
+ * See docs/adr/0031-buyer-initiated-returns.md
+ * ------------------------------------------------------------------ */
+
+const returnSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(10, "Say a little more about what's wrong — the seller reads this.")
+    .max(2000),
+  /** Misdescribed, rather than simply unwanted. */
+  notAsDescribed: z.boolean().default(false),
+});
+
+/** Every return this buyer has asked for. */
+ordersRouter.get("/returns", async (req, res) => {
+  try {
+    res.json({
+      returns: await returnsForBuyer(req.userId!),
+      windowDays: returnWindowDays(),
+    });
+  } catch (err) {
+    fail(res, err, "Could not load your returns.");
+  }
+});
+
+/**
+ * Whether a line can be returned, and if not, why.
+ *
+ * Asked by the order page before it offers the control, so a buyer is told
+ * "the window closed on the 14th" rather than being given a button that fails.
+ */
+ordersRouter.get("/items/:itemId/return", async (req, res) => {
+  try {
+    const check = await eligibility(req.userId!, req.params.itemId);
+    if (!check.eligible) {
+      /**
+       * A line that is not theirs, and one that does not exist, both answer
+       * 404 — the same policy as addresses and payouts. Distinguishing them
+       * turns an id into a way to ask whether somebody else bought something.
+       */
+      if (check.reason === "not-your-order" || check.reason === "no-such-item") {
+        return res.status(404).json({ error: "No such item.", code: "NOT_FOUND" });
+      }
+      return res.json({
+        eligible: false,
+        code: RETURN_REFUSALS[check.reason].code,
+        error: RETURN_REFUSALS[check.reason].error,
+        deadline: check.deadline ?? null,
+        windowDays: returnWindowDays(),
+      });
+    }
+    res.json({
+      eligible: true,
+      title: check.title,
+      amountCents: check.amountCents,
+      deadline: check.deadline,
+      windowDays: returnWindowDays(),
+    });
+  } catch (err) {
+    fail(res, err, "Could not check that item.");
+  }
+});
+
+/**
+ * Each refusal is a different thing for the buyer to do, so each gets its own
+ * sentence rather than one generic "cannot return".
+ */
+const RETURN_REFUSALS: Record<string, { code: string; error: string }> = {
+  "order-not-paid": {
+    code: "ORDER_NOT_PAID",
+    error: "That order was never paid, so there's nothing to return.",
+  },
+  "not-delivered": {
+    code: "NOT_DELIVERED",
+    error: "Confirm the item arrived first — returns start from delivery.",
+  },
+  "window-closed": {
+    code: "WINDOW_CLOSED",
+    error: "The return window for that item has closed.",
+  },
+  "already-refunded": {
+    code: "ALREADY_REFUNDED",
+    error: "That item has already been refunded.",
+  },
+  "already-requested": {
+    code: "ALREADY_REQUESTED",
+    error: "You've already opened a return for that item.",
+  },
+  raced: {
+    code: "ALREADY_REQUESTED",
+    error: "You've already opened a return for that item.",
+  },
+  "not-your-order": { code: "NOT_FOUND", error: "No such item." },
+  "no-such-item": { code: "NOT_FOUND", error: "No such item." },
+};
+
+ordersRouter.post("/items/:itemId/return", async (req, res) => {
+  try {
+    const parsed = returnSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return res.status(400).json({
+        error: issue?.message ?? "Invalid input",
+        code: "INVALID_INPUT",
+        field: issue?.path[0],
+      });
+    }
+
+    /**
+     * Rate limited because each request is a message a seller has to read, and
+     * an unlimited endpoint is a way to bury one seller in requests.
+     */
+    const limit = await checkRateLimit(`return-open:${req.userId}`, 20, 60 * 60 * 1000);
+    if (!limit.allowed) {
+      return res.status(429).json({
+        error: "Too many return requests. Try again later.",
+        code: "RATE_LIMITED",
+        retryAfterSeconds: limit.retryAfterSeconds,
+      });
+    }
+
+    const outcome = await openReturn({
+      buyerId: req.userId!,
+      orderItemId: req.params.itemId,
+      reason: parsed.data.reason,
+      notAsDescribed: parsed.data.notAsDescribed,
+    });
+
+    if (outcome.opened) {
+      return res.status(201).json({ id: outcome.id, deadline: outcome.deadline });
+    }
+
+    if (outcome.reason === "not-your-order" || outcome.reason === "no-such-item") {
+      return res.status(404).json({ error: "No such item.", code: "NOT_FOUND" });
+    }
+    const explain = RETURN_REFUSALS[outcome.reason];
+    res.status(409).json({ error: explain.error, code: explain.code });
+  } catch (err) {
+    fail(res, err, "Could not open that return.");
+  }
+});
+
+ordersRouter.post("/returns/:id/withdraw", async (req, res) => {
+  try {
+    const outcome = await withdrawReturn(req.userId!, req.params.id);
+    if (outcome.done) return res.json({ status: outcome.status });
+    // "not-yours" answers 404 alongside "no-such-request", so an id is not an
+    // oracle for whether somebody else has an open return.
+    if (outcome.reason === "no-such-request" || outcome.reason === "not-yours") {
+      return res.status(404).json({ error: "No such return.", code: "NOT_FOUND" });
+    }
+    res.status(409).json({
+      error: "That return has already been answered.",
+      code: "WRONG_STATE",
+      status: outcome.detail,
+    });
+  } catch (err) {
+    fail(res, err, "Could not withdraw that return.");
+  }
+});
+
+/** Asking a moderator to look at a refusal. Only from REFUSED. */
+ordersRouter.post("/returns/:id/escalate", async (req, res) => {
+  try {
+    const outcome = await escalateReturn(req.userId!, req.params.id);
+    if (outcome.done) return res.json({ status: outcome.status });
+    if (outcome.reason === "no-such-request" || outcome.reason === "not-yours") {
+      return res.status(404).json({ error: "No such return.", code: "NOT_FOUND" });
+    }
+    res.status(409).json({
+      error: "Only a refused return can be escalated.",
+      code: "WRONG_STATE",
+      status: outcome.detail,
+    });
+  } catch (err) {
+    fail(res, err, "Could not escalate that return.");
+  }
+});
+
 ordersRouter.get("/refunds", async (req, res) => {
   try {
     res.json({ refunds: await refundsForBuyer(req.userId!) });

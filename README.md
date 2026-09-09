@@ -125,6 +125,11 @@ with it. The interesting ones assert things a response cannot show you:
   for its whole TTL; it can only be caught by writing and reading again.
 - **`refunds`** covers the async webhook path, including a forged signature and
   a redelivery.
+- **`returns`** and **`return-routes`** cover the buyer's route to a refund: the
+  five eligibility conditions separately, six simultaneous requests opening
+  exactly one, six simultaneous answers producing exactly one, and an approval
+  whose refund fails being reverted rather than left claiming money was on its
+  way.
 - **`payouts`** asserts each of the five payability conditions separately —
   including one whose only disqualification is that its order was never paid,
   which a query joining on delivery alone would happily hand a seller — then
@@ -352,7 +357,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 30 ADRs on why things are built the way they are — 28 accepted, and the two payout ones still Proposed because they turn on business questions nobody has answered |
+| [Decision records](docs/adr/README.md) | 31 ADRs on why things are built the way they are, all accepted |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
@@ -434,6 +439,12 @@ never learns the backend's address. See
 
 **Money back**
 
+- **A buyer can ask.** Open the order, say what's wrong, and the seller answers;
+  a refusal has to carry a reason and can be escalated to a moderator, whose
+  decision is final ([ADR 0031](docs/adr/0031-buyer-initiated-returns.md))
+- The return window derives from the payout hold rather than being picked
+  separately, so a return can never land on money already sent to the seller —
+  and the boot banner says so if an operator configures them apart
 - Automatic refunds when a seller marks a line unsendable, and moderator-issued
   refunds from the admin panel
 - Over-refund protection as an atomic conditional `UPDATE`, and settlement by

@@ -3,6 +3,12 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
 import { requireSeller } from "../middleware/requireSeller";
 import {
+  approveReturn,
+  refuseReturn,
+  returnsForSeller,
+  sellerForRequest,
+} from "../lib/returns";
+import {
   SalesError,
   getSale,
   listSales,
@@ -128,5 +134,100 @@ salesRouter.post("/sales/:id/cannot-send", async (req, res) => {
     });
   } catch (err) {
     fail(res, err, "Could not update that sale.");
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Returns the seller has to answer
+ *
+ * Added to this router rather than a new one mounted at /seller. Two routers
+ * on one mount is how the payout gate came to answer 500 for every sibling
+ * route under /seller, and a return is a fact about a sale — it belongs beside
+ * the sales it concerns.
+ * See docs/adr/0031-buyer-initiated-returns.md
+ * ------------------------------------------------------------------ */
+
+const respondSchema = z.object({
+  approve: z.boolean(),
+  /**
+   * Required to refuse, optional to approve. A refusal with no reason forces
+   * the buyer to escalate blind, which makes escalation the only rational
+   * answer every time.
+   */
+  note: z.string().trim().max(2000).optional(),
+});
+
+salesRouter.get("/returns", async (req, res) => {
+  try {
+    const openOnly = req.query.filter === "open";
+    res.json({ returns: await returnsForSeller(req.sellerId!, openOnly) });
+  } catch (err) {
+    fail(res, err, "Could not load your returns.");
+  }
+});
+
+salesRouter.post("/returns/:id/respond", async (req, res) => {
+  try {
+    const parsed = respondSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return res.status(400).json({
+        error: issue?.message ?? "Invalid input",
+        code: "INVALID_INPUT",
+      });
+    }
+
+    /**
+     * Scoped by walking the line back to its seller. Another seller's request
+     * answers 404 rather than 403 — the same policy as sales and payouts, so
+     * an id cannot be used to ask whether a rival has an open return.
+     */
+    const owner = await sellerForRequest(req.params.id);
+    if (owner === null || owner !== req.sellerId) {
+      return res.status(404).json({ error: "No such return.", code: "NOT_FOUND" });
+    }
+
+    const outcome = parsed.data.approve
+      ? await approveReturn({
+          id: req.params.id,
+          decidedById: req.userId!,
+          note: parsed.data.note ?? null,
+        })
+      : await refuseReturn({
+          id: req.params.id,
+          decidedById: req.userId!,
+          note: parsed.data.note ?? "",
+        });
+
+    if (outcome.done) return res.json({ status: outcome.status, refundId: outcome.refundId });
+
+    if (outcome.reason === "note-required") {
+      return res.status(400).json({
+        error: "Say why you're refusing — the buyer sees this.",
+        code: "NOTE_REQUIRED",
+      });
+    }
+    if (outcome.reason === "wrong-state") {
+      return res.status(409).json({
+        error: "That return has already been answered.",
+        code: "WRONG_STATE",
+        status: outcome.detail,
+      });
+    }
+    if (outcome.reason === "refund-failed") {
+      /**
+       * 502, and the request has been put back to OPEN by `approveReturn`. The
+       * seller meant to approve and nothing moved, so this has to read as "try
+       * again" rather than as a decision that stuck.
+       */
+      return res.status(502).json({
+        error: "The refund could not be issued, so the return is still open. Try again.",
+        code: "REFUND_FAILED",
+        detail: outcome.detail,
+      });
+    }
+    res.status(404).json({ error: "No such return.", code: "NOT_FOUND" });
+  } catch (err) {
+    fail(res, err, "Could not answer that return.");
   }
 });

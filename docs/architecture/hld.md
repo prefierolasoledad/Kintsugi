@@ -290,6 +290,16 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
   [ADR 0030](../adr/0030-payout-eligibility-and-hold.md). Two questions the code
   cannot answer are recorded there: who pays Stripe's Connect fees on a platform
   that takes no cut, and how long the hold after delivery should be.
+- **A return is approved on trust, not on the item coming back.** Nothing here
+  tracks a parcel going the other way, because that needs the carrier
+  integration the shipping page was rewritten to stop promising. Approval is the
+  seller saying they are content; a seller who approves and receives nothing has
+  been defrauded and support is their only route
+  ([ADR 0031](../adr/0031-buyer-initiated-returns.md)).
+- **A seller's silence on a return expires nothing.** There is no timer, so an
+  unanswered request waits until the buyer escalates it. That is a button they
+  press, not a deadline the system keeps — the same missing-scheduler gap as
+  everything else on this list.
 - **Nothing calls `sendPendingPayouts`.** A payout claims its lines before the
   transfer, so a crash in between leaves money reserved and unsent. The function
   that finishes those claims is written and covered, and has to be invoked — by
@@ -336,5 +346,5 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
   Express API, and a production build of the storefront under a real browser. The
   cost of that choice is that `npm test` cannot run against nothing: it needs a
   database, a Redis, and both servers up. See
-  [CONTRIBUTING.md](../../CONTRIBUTING.md#testing) and
+  [CONTRIBUTING.md](../../CONTRIBUTING.md#before-you-push) and
   [backend/tests/README.md](../../backend/tests/README.md).

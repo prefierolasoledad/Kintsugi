@@ -80,6 +80,7 @@ notification pipeline has its own diagram in
 | `verification.ts` | Applies an identity decision to a seller profile; sets `payoutsEnabled` |
 | `payoutProvider.ts` | The Connect seam: `createAccount`, `onboardingLink`, `accountStatus`, `transfer`, `reverseTransfer`. Stub and `stripe_connect` ([ADR 0029](../adr/0029-payouts-separate-transfers-not-destination-charges.md)) |
 | `payouts.ts` | What a seller is owed and the claim that pays it: `payableItems`, `earningsSummary`, `claimPayout`, `sendClaimedPayout`, `sendPendingPayouts`, `reverseForRefund` ([ADR 0030](../adr/0030-payout-eligibility-and-hold.md)) |
+| `returns.ts` | A buyer asking for money back: `eligibility`, `openReturn` (the insert is the claim), and the state machine `approveReturn` / `refuseReturn` / `escalateReturn` / `withdrawReturn` ([ADR 0031](../adr/0031-buyer-initiated-returns.md)) |
 
 ### `lib/` reference — trust and administration
 
@@ -88,7 +89,7 @@ notification pipeline has its own diagram in
 | `reviews.ts` | Reviews, and ratings computed from rows rather than stored ([ADR 0009](../adr/0009-computed-ratings.md)) |
 | `moderation.ts` | Removals, suspensions and report resolution, each writing an append-only audit row |
 | `adminAuth.ts` | The separate short-lived admin session and its TOTP step-up ([ADR 0015](../adr/0015-admin-by-cli-grant-and-step-up.md)) |
-| `adminStats.ts` | Every read-only query behind the admin panel, including the delivery log and the payout log |
+| `adminStats.ts` | Every read-only query behind the admin panel, including the delivery, payout and return logs |
 | `passwordReset.ts` | Reset tokens: hashed, single-use, and no account enumeration ([ADR 0017](../adr/0017-password-change-and-reset.md)) |
 | `redis.ts` | Connection singleton shared by the limiter and the cache |
 
@@ -453,7 +454,71 @@ never sells again keeps the money. Chasing it would cost more than it recovers.
 
 ---
 
-## 8. Frontend patterns
+## 8. Returning something
+
+A buyer asking for their money back. A **request** the seller answers, not a
+refund — approving one produces an ordinary refund
+([ADR 0031](../adr/0031-buyer-initiated-returns.md)).
+
+```mermaid
+stateDiagram-v2
+    [*] --> OPEN: buyer asks
+    OPEN --> WITHDRAWN: buyer changes their mind
+    OPEN --> APPROVED: seller agrees
+    OPEN --> REFUSED: seller says no, with a reason
+    REFUSED --> ESCALATED: buyer disputes it
+    ESCALATED --> APPROVED: moderator agrees with the buyer
+    ESCALATED --> REJECTED: moderator agrees with the seller
+    APPROVED --> [*]: a Refund exists
+    REJECTED --> [*]: terminal
+```
+
+**Every transition is a conditional `UPDATE` filtered on the status it expects
+to find.** Two people answering at once — a seller refusing while a moderator
+approves — both read `OPEN`, and both would write. Filtering means the first
+moves the row and the second matches zero rows and loses. An `update` by id
+would let all of them write, and the note the buyer ended up seeing would be a
+different person's words from the decision recorded first.
+
+### Approving, and the ordering that matters
+
+```
+1. claim the transition      OPEN|ESCALATED -> APPROVED  (conditional UPDATE)
+2. issueRefund(BUYER_RETURN)                             (the ordinary path)
+3. record refundId
+```
+
+If step 2 throws, **step 1 is reverted**. A request left `APPROVED` with no
+refund tells the buyer their money is coming while nothing is owed to anyone —
+worse than the request simply staying open, and unlike a stranded payout there
+is no sweeper to come back for it.
+
+The reverse ordering cannot double-spend either, because the headroom guard on
+`Order.refundedCents` stops the second refund
+([ADR 0016](../adr/0016-refunds-claim-then-refund.md)) — but it leaves money
+moved against a request that still reads unanswered.
+
+### What makes a line returnable
+
+Five conditions, all of them:
+
+| Condition | Why |
+| --- | --- |
+| Its order is `PAID` | A delivered line on an unpaid order is money nobody handed over |
+| Not already `REFUNDED` | Answered separately, so a returned item does not report "never paid" |
+| Its line is `DELIVERED` | And by the **buyer's** confirmation, which only they can give |
+| Inside `RETURN_WINDOW_DAYS` | Measured from that confirmation |
+| No refund and no request already touches it | Including a `PENDING` refund |
+
+**The window derives from the payout hold.** A window longer than the hold means
+every late return lands on money already transferred, so the reversal-and-debt
+path stops being exceptional and becomes routine. Deriving one from the other
+makes them consistent by construction; configuring them apart is allowed and the
+boot banner says so.
+
+---
+
+## 9. Frontend patterns
 
 **Server fetch, client arrangement.** `app/page.tsx` is a server component that
 fetches categories and both shelves in parallel, then hands them to
@@ -474,7 +539,7 @@ instead of showing a control that does nothing. There is no non-functional
 
 ---
 
-## 9. Conventions
+## 10. Conventions
 
 - **Validation at the boundary.** Zod at the route; typed values inward.
 - **`async` handlers are wrapped.** Express 4 does not catch rejected promises;

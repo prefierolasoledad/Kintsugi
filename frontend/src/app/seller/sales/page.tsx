@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import Footer from "@/components/Footer";
 import Nav from "@/components/Nav";
 import { ApiError } from "@/lib/api";
+import SellerReturns from "@/components/SellerReturns";
 import { useAuth } from "@/lib/AuthContext";
 import { countryName } from "@/lib/addressesApi";
 import { formatPrice } from "@/lib/catalog";
@@ -129,6 +130,13 @@ export default function SalesPage() {
           {error}
         </p>
       )}
+
+      {/*
+        Above the sales list on purpose. An unanswered return is somebody
+        waiting on a decision about their money, which outranks an unsent
+        parcel — and it renders nothing at all when there are none.
+      */}
+      <SellerReturns />
 
       <div className="mt-8 flex flex-wrap gap-2">
         {TABS.map((tab) => (

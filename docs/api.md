@@ -812,6 +812,83 @@ it would read as an order whose id is the string `refunds`.
 `itemTitle` comes from the line's snapshot, so it survives the listing being
 deleted — a likely outcome for something a seller could not send.
 
+### Returns
+
+A buyer asking for their money back on one line. A **request** the seller
+answers, not a refund — approving one produces an ordinary `Refund` with the
+`BUYER_RETURN` trigger, so the over-refund guard, the provider call, webhook
+settlement and the payout reversal all apply unchanged.
+[ADR 0031](adr/0031-buyer-initiated-returns.md).
+
+```
+OPEN ──approve──> APPROVED (a Refund exists)
+     ──refuse───> REFUSED ──escalate──> ESCALATED ──> APPROVED | REJECTED
+     ──withdraw─> WITHDRAWN
+```
+
+The window derives from `PAYOUT_HOLD_DAYS` unless `RETURN_WINDOW_DAYS` overrides
+it. A window longer than the payout hold means every late return lands on money
+already transferred, so the two are consistent by default and the boot banner
+says so when they are not.
+
+#### `GET /orders/items/:itemId/return`
+
+Whether the line can be returned. **`eligible: false` is a 200**, because "the
+window closed on the 14th" is an answer rather than an error — the page shows it
+instead of offering a button that would fail.
+
+```json
+{ "eligible": true, "title": "A mended plate", "amountCents": 6400,
+  "deadline": "2026-09-16T…", "windowDays": 7 }
+```
+
+| Refusal | Code |
+| --- | --- |
+| Order never paid | `ORDER_NOT_PAID` |
+| Buyer hasn't confirmed delivery | `NOT_DELIVERED` |
+| Past the window (carries `deadline`) | `WINDOW_CLOSED` |
+| Already refunded — including a fully refunded order | `ALREADY_REFUNDED` |
+| A request already exists | `ALREADY_REQUESTED` |
+
+Somebody else's line is a **404**, not a refusal: distinguishing them turns an
+id into a way to ask what another person bought.
+
+#### `POST /orders/items/:itemId/return`
+
+```json
+{ "reason": "The rim is chipped and it wasn't in the photos.",
+  "notAsDescribed": true }
+```
+
+`reason` needs 10 characters — the seller reads it verbatim and has to be able
+to act on it. `notAsDescribed` is recorded because it is what would decide who
+pays return postage; nothing acts on it yet.
+
+`201` → `{ "id": "…", "deadline": "…" }`
+
+The insert is the claim: `return_requests.orderItemId` is unique, so a double
+tap collides on the constraint rather than opening two rival requests against
+one line. Rate limited to **20 per hour per buyer** — each one is a message a
+seller has to read.
+
+#### `POST /orders/returns/:id/withdraw` · `POST /orders/returns/:id/escalate`
+
+Withdraw works only from `OPEN`; once somebody has answered, withdrawing would
+erase their answer. Escalate works only from `REFUSED` — it is not a way past
+the seller, who has to have said no first. **Nothing escalates on a timer**:
+there is no scheduler here, so a seller's silence is answered by the buyer
+pressing this rather than by a deadline.
+
+Another buyer's return is a `404`. Wrong state is `409 WRONG_STATE`.
+
+#### `GET /orders/returns`
+
+Every return this buyer has asked for, with the item named, the buyer's own
+words, and the answer verbatim if there is one. Also returns `windowDays`, so
+nothing in the UI hardcodes it.
+
+---
+
 ### `POST /orders/:id/cancel`
 Only while `PENDING_PAYMENT`. A `PROCESSING` order returns
 `409 PAYMENT_IN_PROGRESS`, because returning stock while a charge may complete
@@ -867,6 +944,38 @@ a moderator, carries their stated reason, and notifies the buyer that the money
 is on its way back. See [ADR 0016](adr/0016-refunds-claim-then-refund.md).
 
 ---
+
+### `GET /seller/returns?filter=open`
+
+Returns against this seller's own lines, with the buyer's words and whether they
+called the item misdescribed. `filter=open` narrows to the ones still needing an
+answer.
+
+### `POST /seller/returns/:id/respond`
+
+```json
+{ "approve": true }
+{ "approve": false, "note": "The chip is visible in the third photo." }
+```
+
+**A refusal requires a note**, and the buyer sees it verbatim — refusing in
+silence would make escalating the only rational response every time.
+
+Approving issues the refund. If the provider refuses, the request is **put back
+to OPEN** and this answers `502 REFUND_FAILED`: a request left APPROVED with no
+refund behind it would tell the buyer their money was coming when nothing was
+owed to anyone.
+
+| Failure | Code |
+| --- | --- |
+| Another seller's return, or none | `NOT_FOUND` (404) |
+| Refusing with no note | `NOTE_REQUIRED` (400) |
+| Already answered, or escalated to a moderator | `WRONG_STATE` (409) |
+| The refund could not be issued — still open | `REFUND_FAILED` (502) |
+
+A seller **cannot** answer an `ESCALATED` request. That is the point of
+escalation, and only the admin route may.
+
 
 ## Wishlist — `/wishlist` 🔒
 
@@ -989,6 +1098,8 @@ retype the digits their app is still displaying.
 | `GET /admin/audit` | Every moderation action, newest first |
 | `GET /admin/deliveries?q=&channel=&status=&page=` | The delivery ledger. `q` takes an email address, a name, or an `eventId`; `channel=EMAIL\|PUSH\|SMS`; `status` adds `DEFERRED` and `PENDING`. Also returns `byStatus` for the whole filtered set |
 | `GET /admin/payouts?q=&status=&page=` | Money sent to sellers. `q` takes a seller email or name, a payout id, or the provider's transfer id; `status=PENDING\|PAID\|FAILED`. Returns `byStatus` and `totals` (sent, netted off, outstanding seller debt) for the whole filtered set. **Read only — there is no retry here**, because a retry moves money and only the seller's claim-then-transfer path cannot double-pay |
+| `GET /admin/returns?q=&status=&page=` | Return requests. `q` takes a buyer email or name, a request id, or an order reference; `status` covers all six states. **`ESCALATED` is why this exists** — a buyer asked, the seller refused, and only a moderator can see it, because a seller sees only their own and a buyer only theirs. Ordered so escalations come first |
+| `POST /admin/returns/:id/decide` | Settles one. `{approve, note}`. A rejection here is **terminal** (`REJECTED`, not `REFUSED`) so the same request cannot be escalated to a second moderator. Approving issues the refund; a provider failure puts the request back and answers `502`. The audit trail is `decidedById` on the request plus `initiatedById` on the refund — the same arrangement as the admin refund route, rather than a duplicate moderation-log entry that could disagree with it |
 
 Lists page at **25**, returning `{ rows, total, page, pages, pageSize }`.
 

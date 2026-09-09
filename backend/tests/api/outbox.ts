@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import { API, prisma, requireServices } from "../lib/db";
 import { main, wireInterrupt, cleanupOnInterrupt } from "../lib/harness";
 import { CONSUMERS, type NotificationConsumer } from "../../src/lib/consumers";

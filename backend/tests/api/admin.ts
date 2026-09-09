@@ -35,7 +35,10 @@ void main(
 
     const admin = await scope.buyer("admin");
     const ordinary = await scope.buyer("ordinary");
-    const victim = await scope.seller("victim");
+    // Called for its side effect: this registers the account that section 8
+    // later looks up by email to suspend. The binding was never read, and
+    // deleting the line to satisfy the linter would have broken that section.
+    await scope.seller("victim");
 
     /* ============================================================ */
     t.section("before admin is granted");

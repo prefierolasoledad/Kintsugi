@@ -140,11 +140,29 @@ Ship docs with the code, in the same change:
 | A decision with more than one defensible answer | a new [ADR](docs/adr/README.md) |
 | Env var | `.env.example` in the relevant app |
 
-## Testing
+## Before you push
 
 ```bash
 cd backend
+npm run typecheck           # src AND tests/scripts — two tsconfigs, both required
+npm run lint                # errors only; the warning ceiling is pinned
 npm test                    # everything — 1,200 assertions, 33 suites
+```
+
+**`npm run typecheck` runs two programs, and the second one matters.**
+`tsconfig.json` emits `dist`, so it covers only `src`. `tsconfig.tests.json`
+covers `tests/`, `scripts/` and `prisma/` — as ESM with the DOM lib, because
+tsx runs them and the browser suites pass callbacks to `page.evaluate`. A bare
+`tsc --noEmit` checks neither the suites nor the scripts, which is how a type
+error in a test used to reach CI green.
+
+**The linter is for defects, not formatting.** Errors are rules like
+`no-floating-promises` — a dropped `await` before a provider call is invisible
+to the compiler and inverts a claim-then-act sequence. Warnings are pinned at a
+ceiling so the count cannot quietly grow; raising it needs a written reason in
+`eslint.config.mjs`, as the existing entries have.
+
+```bash
 npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```

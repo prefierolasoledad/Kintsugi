@@ -24,11 +24,13 @@ export default function HowItWorksPage() {
 
       <h2>3. It sells</h2>
       <p>
-        When someone buys it, you get a prepaid shipping label to print — see{" "}
+        When someone buys it, the buyer&apos;s address appears on the sale and
+        you post it yourself — we don&apos;t print labels or negotiate courier
+        rates, so build postage into your asking price. See{" "}
         <a href="/sell/shipping-labels" className="text-gold-dim underline">
-          shipping labels
+          shipping
         </a>{" "}
-        for how that works. Pack it reasonably well and drop it off.
+        for what&apos;s expected. Pack it well and drop it off.
       </p>
 
       <h2>4. You get paid</h2>

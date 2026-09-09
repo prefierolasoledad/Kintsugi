@@ -15,6 +15,7 @@ erDiagram
     User ||--o{ Review : writes
     SellerProfile ||--o{ Listing : owns
     SellerProfile ||--o{ KycAttempt : "attempts"
+    User ||--o{ ReturnRequest : "asks for"
     SellerProfile ||--o{ Payout : "is paid by"
     SellerProfile ||--o{ PayoutDebt : owes
     Payout ||--o{ PayoutItem : covers
@@ -355,6 +356,40 @@ cost more than it recovers, and inventing a debt-collection path for a platform
 that takes no cut is not a trade worth making.
 → [ADR 0030](../adr/0030-payout-eligibility-and-hold.md)
 
+### `return_requests`
+
+A buyer asking for their money back on one line. A **request**, which may be
+answered no — not a refund.
+→ [ADR 0031](../adr/0031-buyer-initiated-returns.md)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `orderItemId` | text | **Unique.** Deliberately not a foreign key |
+| `orderId` | uuid | FK → orders, cascade |
+| `buyerId` | uuid | FK → users, cascade. Always the buyer on the order |
+| `status` | enum | `OPEN` → `APPROVED` / `REFUSED` / `WITHDRAWN`; `REFUSED` → `ESCALATED` → `APPROVED` / `REJECTED` |
+| `reason` | text | The buyer's own words, shown to the seller verbatim |
+| `notAsDescribed` | bool | Misdescribed rather than unwanted. Recorded, not yet acted on |
+| `decisionNote` | text? | The answer, in the answerer's words. Required to refuse |
+| `decidedById` | text? | The seller's user id, or the moderator's |
+| `refundId` | text? | **Unique.** Set only on `APPROVED` |
+
+**A separate table from `refunds`, on purpose.** A refund is money moving; this
+is a question that may be answered no. Putting a status on `Refund` instead
+would make a refused return indistinguishable from a **FAILED** refund in the
+one table the finance view reads, and would force the over-refund guard — a
+conditional `UPDATE` on `Order.refundedCents`, and the reason two clicks cannot
+refund twice — to start reasoning about refunds that were only ever asked for.
+
+**`orderItemId` is unique, and that index is the whole safety.** Two taps on
+"Start a return" race, and the second collides here rather than opening a rival
+request against one line that then gets answered separately. Same discipline as
+`payout_items.orderItemId` ([ADR 0030](../adr/0030-payout-eligibility-and-hold.md)),
+and not a foreign key for the same reason: a return has to stay readable after a
+listing is deleted.
+
+**`refundId` is unique** so one request can never be credited twice.
+
 ## Enums
 
 | Enum | Values |
@@ -366,6 +401,7 @@ that takes no cut is not a trade worth making.
 | `OrderStatus` | `PENDING_PAYMENT`, `PROCESSING`, `PAID`, `FAILED`, `CANCELLED`, `REFUNDED` |
 | `FulfilmentStatus` | `UNFULFILLED`, `SHIPPED`, `DELIVERED`, `UNFULFILLABLE` |
 | `PayoutStatus` | `PENDING`, `PAID`, `FAILED` |
+| `ReturnStatus` | `OPEN`, `APPROVED`, `REFUSED`, `ESCALATED`, `REJECTED`, `WITHDRAWN` |
 
 `OrderStatus` and `FulfilmentStatus` are deliberately separate. Payment and
 delivery are independent facts — an order is `PAID` *and* `UNFULFILLED` for as
@@ -439,6 +475,20 @@ Enforced in the application layer unless noted:
     because the buyer was refunded, so nothing is owed.
 28. An unsettled `PayoutDebt` is netted off the next payout and is never
     invoiced. A seller who stops selling keeps the shortfall.
+29. **At most one `ReturnRequest` per `OrderItem`, ever** — enforced by the
+    database. The insert is the claim, so a double tap collides rather than
+    opening two rival requests against one line.
+30. A `ReturnRequest` is `APPROVED` only alongside a `Refund`, and `refundId` is
+    unique. An approval whose refund fails is reverted to its previous status
+    rather than left approved with nothing behind it.
+31. Only `OPEN` accepts a seller's answer, and only `REFUSED` accepts an
+    escalation — every transition is a conditional `UPDATE` on the expected
+    status, so two concurrent answers cannot both win.
+32. A `REJECTED` return is terminal. The same request cannot be escalated to a
+    second moderator.
+33. The return window derives from `PAYOUT_HOLD_DAYS` unless
+    `RETURN_WINDOW_DAYS` overrides it, so by default a return can never land on
+    money already transferred to the seller.
 
 ## Migrations
 
@@ -462,6 +512,7 @@ Enforced in the application layer unless noted:
 | `add_phone_and_sms_verification` | `users.phone` / `phoneVerifiedAt` / `smsConsentAt`, `phone_verifications` |
 | `defer_sms_in_quiet_hours` | `DeliveryStatus.DEFERRED`, `notification_deliveries.notBefore` and its index |
 | `add_seller_payouts` | `payouts`, `payout_items`, `payout_debts`, `PayoutStatus`, and the four `seller_profiles` payout columns |
+| `add_buyer_returns` | `return_requests`, `ReturnStatus`, and `RefundTrigger.BUYER_RETURN` |
 
 ### `outbox_events`
 

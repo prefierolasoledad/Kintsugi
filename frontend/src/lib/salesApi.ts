@@ -116,3 +116,46 @@ export const BUYER_FULFILMENT_LABEL: Record<FulfilmentStatus, string> = {
   DELIVERED: "Delivered",
   UNFULFILLABLE: "Seller couldn't send it",
 };
+
+/* ------------------------------------------------------------------ *
+ * Returns the seller has to answer
+ * ------------------------------------------------------------------ */
+
+export type SellerReturn = {
+  id: string;
+  orderItemId: string;
+  orderId: string;
+  status: "OPEN" | "APPROVED" | "REFUSED" | "ESCALATED" | "REJECTED" | "WITHDRAWN";
+  /** The buyer's own words. Shown verbatim — they wrote it for the seller. */
+  reason: string;
+  notAsDescribed: boolean;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  refundId: string | null;
+  createdAt: string;
+  title: string;
+  amountCents: number;
+  orderReference: string | null;
+  deliveredAt: string | null;
+};
+
+export function getSellerReturns(filter: "all" | "open" = "all") {
+  return request<{ returns: SellerReturn[] }>(
+    `/returns${filter === "open" ? "?filter=open" : ""}`
+  );
+}
+
+/**
+ * Approving issues the refund. A `502 REFUND_FAILED` means nothing moved and
+ * the request is back to OPEN — worth retrying rather than a decision that
+ * stuck.
+ */
+export function respondToReturn(
+  id: string,
+  input: { approve: boolean; note?: string }
+) {
+  return request<{ status: SellerReturn["status"]; refundId?: string }>(
+    `/returns/${id}/respond`,
+    { method: "POST", body: JSON.stringify(input) }
+  );
+}

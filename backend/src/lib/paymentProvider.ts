@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import Stripe from "stripe";
-import { env, getStripe, verifyStripeWebhook } from "./stripeClient";
+import { env, getStripe } from "./stripeClient";
 
 /**
  * Payment provider.

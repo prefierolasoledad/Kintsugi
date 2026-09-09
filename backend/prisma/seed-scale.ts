@@ -447,7 +447,7 @@ async function seed() {
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
     const result = await prisma.listing.createMany({
-      data: chunk.map(({ photo, photoAlt, ...rest }) => rest),
+      data: chunk.map(({ photo: _photo, photoAlt: _photoAlt, ...rest }) => rest),
       // Makes re-running a no-op instead of an error.
       skipDuplicates: true,
     });

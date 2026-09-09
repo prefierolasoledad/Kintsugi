@@ -30,6 +30,7 @@ export default function AdminShell({
   subtitle,
   actions,
   openReports,
+  openReturns,
   secondsLeft,
   onSignOut,
 }: {
@@ -38,6 +39,8 @@ export default function AdminShell({
   subtitle?: string;
   actions?: React.ReactNode;
   openReports?: number;
+  /** Escalated returns: a buyer disputed a refusal and it needs deciding. */
+  openReturns?: number;
   secondsLeft?: number;
   onSignOut: () => void;
 }) {
@@ -53,6 +56,7 @@ export default function AdminShell({
     { href: "/admin/reports", label: "Reports", icon: <FlagIcon />, badge: openReports },
     { href: "/admin/deliveries", label: "Delivery log", icon: <SendIcon /> },
     { href: "/admin/payouts", label: "Payout log", icon: <BanknoteIcon /> },
+    { href: "/admin/returns", label: "Returns", icon: <ReturnIcon />, badge: openReturns },
     { href: "/admin/audit", label: "Audit log", icon: <ScrollIcon /> },
   ];
 
@@ -268,6 +272,15 @@ function SendIcon() {
   return (
     <svg {...s}>
       <path d="M17 3.5 8.5 12M17 3.5l-5.5 13-3-4.5-4.5-3z" {...stroke} />
+    </svg>
+  );
+}
+
+function ReturnIcon() {
+  return (
+    <svg {...s}>
+      <path d="M7.5 5.5 4 9l3.5 3.5" {...stroke} />
+      <path d="M4 9h8a4 4 0 0 1 0 8H8.5" {...stroke} />
     </svg>
   );
 }

@@ -1,5 +1,5 @@
 import { prisma, requireCatalog, requireServices } from "../lib/db";
-import { awaitNotifications, buyOne, checkoutOne, CARDS, PASSWORD, Scope } from "../lib/fixtures";
+import { awaitNotifications, buyOne, checkoutOne, PASSWORD, Scope } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
 import { currentCode, freshCode } from "../lib/totp";
 import {

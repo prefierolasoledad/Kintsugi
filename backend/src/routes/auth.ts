@@ -66,10 +66,12 @@ function publicUser(user: {
 }
 
 async function issueSession(res: import("express").Response, userId: string) {
-  const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken({ userId }),
-    issueRefreshToken(userId),
-  ]);
+  // signAccessToken is synchronous — it signs in-process. Only the refresh
+  // token touches the database. This used to wrap both in Promise.all, which
+  // read as two round trips in parallel and was actually one await and one
+  // pointless wrap.
+  const accessToken = signAccessToken({ userId });
+  const refreshToken = await issueRefreshToken(userId);
   setAuthCookies(res, { accessToken, refreshToken });
 }
 

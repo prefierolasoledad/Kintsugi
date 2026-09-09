@@ -331,6 +331,8 @@ report 10 and 8 instead of 25 and 44.
 | `operations` | the lag and DLQ health reports, outbox retention, and the stale-PENDING sweep |
 | `payouts` | the five payability conditions separately; the concurrent claim; refund before and after payout; a failed reversal becoming a debt |
 | `payout-routes` | the same six endpoints over HTTP: every one refused before verification, and the gate not leaking onto its neighbours |
+| `returns` | the five eligibility conditions separately; six simultaneous requests opening one; six simultaneous answers producing one; an approval whose refund fails being reverted |
+| `return-routes` | the buyer's whole route over HTTP — ask, refuse, escalate, settle — and the four parties who must be turned away |
 | `wishlist` | saving is inert; idempotent under concurrency; cross-user isolation |
 | `reviews` | verified-purchase gate; one review per person; the badge is earned |
 | `checkout-bff` | the proxy path a browser actually takes |

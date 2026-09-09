@@ -117,7 +117,18 @@ export async function sendPushToUser(
   let sent = 0;
   const dead: string[] = [];
   const alive: string[] = [];
-  let lastError: unknown = null;
+  /**
+   * COLLECTED IN AN ARRAY rather than a single mutable `let`, and not for
+   * style. The failures happen inside the `Promise.all` callback below, and
+   * TypeScript's flow analysis does not model a callback having run: a
+   * `let lastError: Error | null` reads as `null` at the throw site no matter
+   * what it is annotated as, which makes the rethrow a `throw null` as far as
+   * the compiler and `only-throw-error` are concerned. Pushing to a const array
+   * sidesteps flow narrowing entirely and is the more honest shape anyway —
+   * three dead endpoints produce three errors, and only one of them was ever
+   * being kept.
+   */
+  const failures: Error[] = [];
 
   await Promise.all(
     subs.map(async (sub) => {
@@ -137,7 +148,7 @@ export async function sendPushToUser(
         if (status === 404 || status === 410) {
           dead.push(sub.id);
         } else {
-          lastError = err;
+          failures.push(err instanceof Error ? err : new Error(String(err)));
         }
       }
     })
@@ -158,7 +169,7 @@ export async function sendPushToUser(
    * delivery — the person got the notification. Throwing there would record a
    * failure for a message they are currently reading.
    */
-  if (sent === 0 && lastError) throw lastError;
+  if (sent === 0 && failures.length > 0) throw failures[failures.length - 1];
 
   return { sent, removed: dead.length };
 }

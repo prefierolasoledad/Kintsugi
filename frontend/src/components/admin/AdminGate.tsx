@@ -56,7 +56,7 @@ type State =
   | { kind: "notFound" }
   | { kind: "setup" }
   | { kind: "locked" }
-  | { kind: "ready"; secondsLeft: number; openReports: number };
+  | { kind: "ready"; secondsLeft: number; openReports: number; openReturns: number };
 
 export default function AdminGate({
   title,
@@ -98,13 +98,16 @@ export default function AdminGate({
       const live = await isAdminSessionActive();
       if (!live.active) return setState({ kind: "locked" });
 
-      // The badge count. Failing to load it must not lock a working panel, so
-      // it falls back to zero rather than throwing.
-      const openReports = await getOverview()
-        .then((o) => o.reports.open)
-        .catch(() => 0);
+      // The badge counts. Failing to load them must not lock a working panel,
+      // so they fall back to zero rather than throwing.
+      const badges = await getOverview()
+        .then((o) => ({
+          openReports: o.reports.open,
+          openReturns: o.returns.escalated,
+        }))
+        .catch(() => ({ openReports: 0, openReturns: 0 }));
 
-      setState({ kind: "ready", secondsLeft: live.secondsLeft, openReports });
+      setState({ kind: "ready", secondsLeft: live.secondsLeft, ...badges });
     } catch {
       setState({ kind: "notFound" });
     }
@@ -176,6 +179,7 @@ export default function AdminGate({
         subtitle={subtitle}
         actions={actions}
         openReports={state.openReports}
+        openReturns={state.openReturns}
         secondsLeft={state.secondsLeft}
         onSignOut={signOut}
       >

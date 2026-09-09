@@ -58,9 +58,37 @@ jobs:
         working-directory: backend
         run: npx prisma validate
 
+      # BOTH programs, and the second one is the point.
+      #
+      # tsconfig.json exists to emit `dist`, so it sets `rootDir: "src"` and
+      # includes only `src`. This step used to be a bare `tsc --noEmit` against
+      # it, which meant `tests/`, `scripts/` and `prisma/` were never
+      # typechecked by CI at all — all 33 suites and every demo script. A type
+      # error in one of them passed CI and failed at runtime.
+      #
+      # tsconfig.tests.json covers them, as ESM with the DOM lib, because they
+      # are run by tsx and the browser suites pass callbacks to page.evaluate.
+      # Verified by planting a type error in a suite and watching this fail.
       - name: Typecheck backend
         working-directory: backend
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      # --max-warnings pins the deferred count, same arrangement as the
+      # frontend below.
+      #
+      # 186 warnings, and 124 of them are one rule: no-misused-promises on
+      # `router.get("/x", async …)`. Express 4 does not await a handler, so a
+      # rejection would escape — except every handler wraps its body in
+      # try/catch and answers with fail(). The real fix is one asyncHandler
+      # wrapper at ~124 call sites, which is a refactor of its own.
+      #
+      # This script did not run at all until now: package.json declared it with
+      # no eslint config beside it, so `npm run lint` exited with a migration
+      # error and no workflow called it. The rules that are ERRORS are the ones
+      # that catch money bugs — no-floating-promises above all.
+      - name: Lint backend
+        working-directory: backend
+        run: npm run lint
 
       # Next generates global types — LayoutProps, PageProps, the route map —
       # into .next/types, and tsconfig includes that directory. On a developer's
@@ -101,9 +129,20 @@ jobs:
       # reset paging and filters in their change handlers, so neither
       # contributed a second instance. Two new pages, two warnings — the
       # ceiling tracks the pattern, and the pattern did not get worse.
+      #
+      # 39 -> 40 (buyer returns). One instance: OrderLines fetches the buyer's
+      # returns once the order is settled, so a line that already has a request
+      # shows its state instead of a button. Fetched there rather than passed in
+      # so neither the payment page nor the receipt has to know returns exist —
+      # which would have added two instances instead of one.
+      #
+      # 40 -> 42 (the return screens). Two more: the seller's returns section
+      # and the admin returns page, both the same load-on-mount effect. Both
+      # reset paging and filters in their change handlers, so neither added a
+      # second instance.
       - name: Lint frontend
         working-directory: frontend
-        run: npx eslint src --max-warnings 39
+        run: npx eslint src --max-warnings 42
 
       # Catches what tsc cannot: a bad import in a route handler, a client
       # component using a server-only API, a page that fails to prerender.

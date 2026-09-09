@@ -40,6 +40,8 @@ export type Overview = {
   catalogue: { total: number; active: number };
   accounts: { total: number; suspended: number };
   orders: { total: number; paid: number };
+  /** Escalated returns, badged in the nav — only a moderator can settle one. */
+  returns: { escalated: number };
 };
 
 /* ---- dashboard ---- */
@@ -79,6 +81,8 @@ export type Metrics = {
     stuckPayments: number;
     failedPayments: number;
     rejectedKyc: number;
+    /** Buyers who disputed a seller's refusal. Only a moderator can settle these. */
+    escalatedReturns: number;
   };
   topSellers: Array<{
     sellerId: string;
@@ -431,6 +435,49 @@ export function getPayoutLog(opts: { q?: string; status?: string; page?: number 
   return request<
     Paged<AdminPayoutRow> & { byStatus: Record<string, number>; totals: PayoutTotals }
   >(`/payouts${qs(opts)}`);
+}
+
+export type ReturnStatus =
+  | "OPEN"
+  | "APPROVED"
+  | "REFUSED"
+  | "ESCALATED"
+  | "REJECTED"
+  | "WITHDRAWN";
+
+export type AdminReturnRow = {
+  id: string;
+  status: ReturnStatus;
+  /** The buyer's own words. */
+  reason: string;
+  notAsDescribed: boolean;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  refundId: string | null;
+  createdAt: string;
+  orderReference: string;
+  buyer: { id: string; email: string; name: string };
+  title: string;
+  amountCents: number;
+  deliveredAt: string | null;
+  seller: { profileId: string | null; email: string | null; name: string | null };
+};
+
+export function getReturns(opts: { q?: string; status?: string; page?: number } = {}) {
+  return request<Paged<AdminReturnRow> & { byStatus: Record<string, number> }>(
+    `/returns${qs(opts)}`
+  );
+}
+
+/**
+ * Settles one either way. A rejection here is terminal — the buyer cannot
+ * escalate the same request to a second moderator.
+ */
+export function decideReturn(id: string, input: { approve: boolean; note?: string }) {
+  return request<{ status: ReturnStatus; refundId?: string }>(`/returns/${id}/decide`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function getReports(status: "OPEN" | "RESOLVED" | "DISMISSED" | "ALL" = "OPEN") {

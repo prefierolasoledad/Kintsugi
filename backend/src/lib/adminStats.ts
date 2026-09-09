@@ -5,6 +5,7 @@ import {
   PayoutStatus,
   RefundStatus,
   ReportStatus,
+  ReturnStatus,
 } from "../generated/prisma/enums";
 import type { DeliveryChannel, DeliveryStatus } from "../generated/prisma/enums";
 
@@ -227,7 +228,8 @@ export async function metrics(days: Range) {
 export async function attention() {
   const staleAfter = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
 
-  const [openReports, unfulfilled, stuck, failedPayments, rejectedKyc] = await Promise.all([
+  const [openReports, unfulfilled, stuck, failedPayments, rejectedKyc, escalatedReturns] =
+    await Promise.all([
     prisma.report.count({ where: { status: ReportStatus.OPEN } }),
     prisma.orderItem.count({
       where: { fulfilment: "UNFULFILLED", order: { status: OrderStatus.PAID, paidAt: { lt: staleAfter } } },
@@ -241,9 +243,23 @@ export async function attention() {
       where: { status: OrderStatus.FAILED, createdAt: { gte: daysAgo(7) } },
     }),
     prisma.sellerProfile.count({ where: { kycStatus: "REJECTED" } }),
+    /**
+     * A buyer disputed a seller's refusal, and only a moderator can settle it.
+     * Belongs here rather than only on the returns page: nothing else in the
+     * system will ever move it, and a person is waiting on the answer. There is
+     * no timer that resolves these — by design, since there is no scheduler.
+     */
+    prisma.returnRequest.count({ where: { status: ReturnStatus.ESCALATED } }),
   ]);
 
-  return { openReports, unfulfilledOver3Days: unfulfilled, stuckPayments: stuck, failedPayments, rejectedKyc };
+  return {
+    openReports,
+    unfulfilledOver3Days: unfulfilled,
+    stuckPayments: stuck,
+    failedPayments,
+    rejectedKyc,
+    escalatedReturns,
+  };
 }
 
 /* ================================================================== *
@@ -907,6 +923,152 @@ export async function listPayouts(opts: {
       nettedCents: paidTotal._sum.nettedCents ?? 0,
       outstandingDebtCents: debt._sum.amountCents ?? 0,
     },
+    total,
+    page,
+    pages,
+    pageSize,
+  };
+}
+
+/* ================================================================== *
+ * Returns
+ * ================================================================== */
+
+/**
+ * Return requests, for the moderator who has to settle the ones a seller
+ * refused.
+ *
+ * ESCALATED is the status this view exists for: a buyer has asked for money
+ * back, the seller has said no, and somebody impartial has to decide. Those
+ * cannot be found any other way — a seller sees only their own, and a buyer
+ * sees only theirs.
+ *
+ * Searchable by buyer email or name, the request id, or the order reference —
+ * what somebody actually arrives holding from a support conversation.
+ */
+export async function listReturns(opts: {
+  q?: string;
+  status?: "ALL" | ReturnStatus;
+  page?: number;
+}) {
+  const q = opts.q?.trim();
+
+  let buyerIds: string[] | undefined;
+  let orderIds: string[] | undefined;
+  if (q) {
+    const [users, orders] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          OR: [
+            { email: { contains: q, mode: "insensitive" } },
+            { name: { contains: q, mode: "insensitive" } },
+          ],
+        },
+        select: { id: true },
+        take: 200,
+      }),
+      prisma.order.findMany({
+        where: { reference: { contains: q, mode: "insensitive" } },
+        select: { id: true },
+        take: 200,
+      }),
+    ]);
+    buyerIds = users.map((u) => u.id);
+    orderIds = orders.map((o) => o.id);
+  }
+
+  const where = {
+    ...(opts.status && opts.status !== "ALL" ? { status: opts.status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { id: q },
+            { orderItemId: q },
+            ...(buyerIds && buyerIds.length > 0 ? [{ buyerId: { in: buyerIds } }] : []),
+            ...(orderIds && orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),
+          ],
+        }
+      : {}),
+  };
+
+  const total = await prisma.returnRequest.count({ where });
+  const { skip, page, pages, pageSize } = paginate(opts.page ?? 1, total);
+
+  const rows = await prisma.returnRequest.findMany({
+    where,
+    // ESCALATED first regardless of age: those are the ones waiting on a
+    // decision from whoever is reading this page.
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    skip,
+    take: pageSize,
+    select: {
+      id: true,
+      orderItemId: true,
+      orderId: true,
+      status: true,
+      reason: true,
+      notAsDescribed: true,
+      decisionNote: true,
+      decidedById: true,
+      decidedAt: true,
+      refundId: true,
+      createdAt: true,
+      buyer: { select: { id: true, email: true, name: true } },
+      order: { select: { reference: true } },
+    },
+  });
+
+  /** One query for the lines, not one per row. */
+  const items = await prisma.orderItem.findMany({
+    where: { id: { in: rows.map((r) => r.orderItemId) } },
+    select: {
+      id: true,
+      title: true,
+      unitPriceCents: true,
+      quantity: true,
+      sellerName: true,
+      deliveredAt: true,
+      seller: { select: { id: true, user: { select: { email: true, name: true } } } },
+    },
+  });
+  const byId = new Map(items.map((i) => [i.id, i]));
+
+  const grouped = await prisma.returnRequest.groupBy({
+    by: ["status"],
+    where,
+    _count: { _all: true },
+  });
+  const byStatus = Object.fromEntries(grouped.map((g) => [g.status, g._count._all]));
+
+  return {
+    rows: rows.map((r) => {
+      const item = byId.get(r.orderItemId);
+      return {
+        id: r.id,
+        status: r.status,
+        reason: r.reason,
+        notAsDescribed: r.notAsDescribed,
+        decisionNote: r.decisionNote,
+        decidedAt: r.decidedAt,
+        refundId: r.refundId,
+        createdAt: r.createdAt,
+        orderReference: r.order.reference,
+        buyer: r.buyer,
+        // Null when the line has been removed, which is worth showing: the
+        // request still happened and still needs an answer.
+        title: item?.title ?? "an item since removed",
+        amountCents: item ? item.unitPriceCents * item.quantity : 0,
+        deliveredAt: item?.deliveredAt ?? null,
+        seller: item?.seller
+          ? {
+              profileId: item.seller.id,
+              email: item.seller.user.email,
+              name: item.seller.user.name,
+            }
+          : { profileId: null, email: null, name: item?.sellerName ?? null },
+      };
+    }),
+    byStatus,
     total,
     page,
     pages,
