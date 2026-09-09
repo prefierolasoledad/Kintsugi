@@ -9,16 +9,41 @@ A marketplace for secondhand furniture, clothing, and objects, where condition
 is disclosed rather than hidden. Built as a full-stack TypeScript application:
 a Next.js storefront, an Express API, and PostgreSQL.
 
-> **Status: in development, and working end to end.** Browsing, accounts,
-> selling, checkout, payments, refunds, order fulfilment, identity
-> verification, email, web push, SMS, and an admin dashboard all work — covered by
-> **1,263 assertions across 35 suites** (`npm test`), run against the real stack
-> rather than mocks — 1,273 with a Kafka broker present, which unlocks the
-> broker-gated section of `retry-ladder`. Payments, identity and payouts run
-> against provider stubs or Stripe's test mode: no real money moves, no real
-> document is checked, and no seller has ever actually been paid. What is
-> missing now is an orchestrator, not a feature.
-> See [What's built](#whats-built).
+> **Status: working end to end.** Browsing, accounts, selling, checkout,
+> payments, refunds, buyer-initiated returns, seller payouts, order fulfilment,
+> identity verification, email, web push, SMS, and an admin dashboard all work —
+> covered by **1,263 assertions across 35 suites** (`npm test`), run against the
+> real stack rather than mocks, 1,273 with a Kafka broker present.
+>
+> It also *deploys*: [Kubernetes manifests](k8s/) with a CloudNativePG cluster,
+> where deleting the Postgres primary promoted a replica and a write then
+> succeeded with **zero API restarts** — measured, on a real cluster made with
+> kind, by [a script in the repo](k8s/failover-demo.sh).
+>
+> **What is not real:** payments, identity and payouts run against provider
+> stubs or Stripe's test mode. No real money has moved, no real document has
+> been checked, and no seller has ever actually been paid. The manifests have
+> never run anywhere but kind. Every gap like this is listed in
+> [What's built](#whats-built) rather than left for you to discover.
+
+---
+
+<!--
+  Four screenshots, and they are the suite's own output rather than a mockup —
+  every one of these was taken by Playwright while the browser tests drove the
+  real application. `backend/tests/screenshots/` is gitignored because 46 files
+  that regenerate on every run do not belong in git history; these are a
+  deliberate, resized copy.
+-->
+
+![The storefront: categories, price drops, and condition shown rather than hidden](docs/screenshots/storefront.webp)
+
+| | |
+| --- | --- |
+| ![A seller's sales, with per-line fulfilment](docs/screenshots/seller-sales.png) | ![A buyer's receipt](docs/screenshots/order-receipt.png) |
+| **Selling.** Fulfilment is per line, because a basket can span several sellers and two sellers cannot share one parcel. | **Buying.** The receipt is a snapshot: editing your address book later cannot rewrite where a past parcel went. |
+| ![The admin dashboard](docs/screenshots/admin-dashboard.png) | ![The moderation audit log](docs/screenshots/admin-audit.png) |
+| **Operating.** Behind a CLI-granted role and a TOTP step-up ([ADR 0015](docs/adr/0015-admin-by-cli-grant-and-step-up.md)). | **Accountable.** Every moderator action writes an append-only audit row, because a removal with no recorded reason is unanswerable. |
 
 ---
 
@@ -551,12 +576,18 @@ never learns the backend's address. See
   decisions still open: who absorbs Connect's per-transfer and per-account fees
   on a platform taking no cut, and whether seven days is the right hold.
 
-- **Two things that should run on a schedule and do not.** A payout that was
-  claimed and never sent — the provider timed out — stays `PENDING` until
-  somebody calls `sendPendingPayouts()`, and nothing does. And base backups are
-  taken on demand with nothing expiring the old ones
-  ([ADR 0020](docs/adr/0020-replication-and-backups.md)). Both are a `CronJob`
-  in Kubernetes; neither is a reason to put a `setInterval` in a web process.
+- **Backups are still not scheduled, in either deployment.** WAL archiving and
+  point-in-time recovery work and the restore is rehearsed
+  ([ADR 0020](docs/adr/0020-replication-and-backups.md)), but base backups are
+  taken on demand and nothing expires the old ones. CloudNativePG does all
+  three in one `barmanObjectStore` block — and
+  [`k8s/base/postgres-cluster.yaml`](k8s/base/postgres-cluster.yaml) leaves it
+  out, because it needs a bucket and credentials no overlay here has. So the
+  mechanism has a home and nothing uses it.
+
+  *The payout half of this used to be here and is now closed:*
+  `payouts:pending` is a CronJob under Kubernetes, and runnable by hand under
+  Compose with `node dist/jobs.js payouts:pending`.
 
   **The recovery sweepers, by contrast, already run** — reservations, in-flight
   orders, quiet-hours deliveries, stale deliveries and outbox retention all

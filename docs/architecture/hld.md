@@ -300,11 +300,18 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
   unanswered request waits until the buyer escalates it. That is a button they
   press, not a deadline the system keeps — the same missing-scheduler gap as
   everything else on this list.
-- **Nothing calls `sendPendingPayouts`.** A payout claims its lines before the
-  transfer, so a crash in between leaves money reserved and unsent. The function
-  that finishes those claims is written and covered, and has to be invoked — by
-  an operator or a cron, like outbox retention and the stale-delivery sweep.
-  Compose has no scheduler.
+- **Under Compose, nothing calls `sendPendingPayouts`.** A payout claims its
+  lines before the transfer, so a crash in between leaves money reserved and
+  unsent, and Compose has no scheduler to finish it — an operator runs
+  `node dist/jobs.js payouts:pending` by hand, or the money sits there.
+
+  **Under Kubernetes it is a CronJob**, every fifteen minutes, and it is the one
+  scheduled job in the system ([ADR 0032](../adr/0032-kubernetes-manifests.md)).
+  The five recovery sweepers are *not* scheduled and never were: they run in the
+  API process on every replica, claiming work with a conditional `UPDATE` so
+  replicas divide it. This one is a Job because it calls a payment provider,
+  which wants an exit code and a start time rather than a line in an
+  application log.
 - **Failover is manual under Compose, and automatic under Kubernetes.** Both
   tiers can run more than one replica — rate limits and the cache are in Redis
   ([ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md),
