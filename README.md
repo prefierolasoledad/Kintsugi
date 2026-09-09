@@ -12,8 +12,8 @@ a Next.js storefront, an Express API, and PostgreSQL.
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
 > verification, email, web push, SMS, and an admin dashboard all work — covered by
-> **1,287 assertions across 35 suites** (`npm test`), run against the real stack
-> rather than mocks — 1,297 with a Kafka broker present, which unlocks the
+> **1,263 assertions across 35 suites** (`npm test`), run against the real stack
+> rather than mocks — 1,273 with a Kafka broker present, which unlocks the
 > broker-gated section of `retry-ladder`. Payments, identity and payouts run
 > against provider stubs or Stripe's test mode: no real money moves, no real
 > document is checked, and no seller has ever actually been paid. What is
@@ -116,7 +116,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**1,287 assertions across 35 suites**, and they drive the actual stack — a real
+**1,263 assertions across 35 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.

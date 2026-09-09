@@ -146,7 +146,7 @@ Ship docs with the code, in the same change:
 cd backend
 npm run typecheck           # src AND tests/scripts — two tsconfigs, both required
 npm run lint                # errors only; the warning ceiling is pinned
-npm test                    # everything — 1,287 assertions, 35 suites
+npm test                    # everything — 1,263 assertions, 35 suites
 ```
 
 **`npm run typecheck` runs two programs, and the second one matters.**

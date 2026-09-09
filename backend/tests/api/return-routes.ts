@@ -1,7 +1,13 @@
 import { prisma, requireServices } from "../lib/db";
-import { Scope, buyOne } from "../lib/fixtures";
+import { PASSWORD, Scope, buyOne } from "../lib/fixtures";
 import { cleanupOnInterrupt, main, wireInterrupt } from "../lib/harness";
-import { RefundStatus, RefundTrigger, ReturnStatus } from "../../src/generated/prisma/enums";
+import { currentCode, freshCode } from "../lib/totp";
+import {
+  RefundStatus,
+  RefundTrigger,
+  ReturnStatus,
+  UserRole,
+} from "../../src/generated/prisma/enums";
 
 /**
  * Returns, over HTTP, all the way to money.
@@ -194,25 +200,63 @@ void main(
     t.check(beforeRefunds === 0, "no refund exists yet", beforeRefunds);
 
     /**
-     * Approved directly through the library rather than through the admin
-     * panel: the panel is behind a TOTP step-up that `admin.ts` already covers
-     * end to end, and re-driving it here would test the step-up twice and the
-     * return path once. What matters is that an approval produces a real
-     * refund with the right trigger.
+     * SETTLED OVER HTTP, THROUGH THE ADMIN PANEL — and the reason is a bug this
+     * suite shipped with.
+     *
+     * The first version called `approveReturn()` directly in the test process,
+     * on the argument that the TOTP step-up is `admin.ts`'s job to cover. It
+     * passed locally and failed in CI, because the two differ in one setting:
+     * `PAYMENT_PROVIDER`. Under `stripe` a refund is an API call and any
+     * process can make it. Under `stub` — which is what CI runs — intents live
+     * in an in-process `Map`, so a payment taken over HTTP sits in the API's
+     * memory and a refund issued from the test process looks for it in an empty
+     * one. Every approval came back `refund-failed`.
+     *
+     * `fixtures.ts` documents exactly this trap on `ownListing`. The lesson it
+     * records is the one that applies here: anything that has to reach the
+     * payment provider must be driven through the server that took the payment.
      */
-    const { approveReturn } = await import("../../src/lib/returns");
-    const moderatorId = await prisma.user
-      .findFirstOrThrow({ where: { email: scope.emailFor("buyer") }, select: { id: true } })
-      .then((u) => u.id);
-
-    const settled = await approveReturn({
-      id: returnId,
-      decidedById: moderatorId,
-      note: "Photo is ambiguous. Refunding.",
-      allowEscalated: true,
+    const moderator = await scope.buyer("moderator");
+    await prisma.user.update({
+      where: { email: scope.emailFor("moderator") },
+      data: { role: UserRole.ADMIN },
     });
-    t.check(settled.done === true, "the escalation is approved",
-      settled.done ? settled.status : settled.reason);
+
+    // Enrol and step up, the same way a person does. Two codes, from two
+    // different periods: the one that finishes enrolment is spent by it.
+    const setup = await moderator.post("/api/admin/totp/setup", { password: PASSWORD });
+    t.check(setup.status === 200, "the moderator can start TOTP setup", setup.status);
+    const secret: string = setup.json.secret;
+    t.check(
+      (await moderator.post("/api/admin/totp/confirm", { code: currentCode(secret) })).status ===
+        200,
+      "and confirm it"
+    );
+    const stepUp = await moderator.post("/api/admin/session", {
+      password: PASSWORD,
+      code: await freshCode(secret),
+    });
+    t.check(stepUp.status === 200 && stepUp.json.active === true, "and open the panel",
+      `${stepUp.status} ${JSON.stringify(stepUp.json)}`);
+
+    /* ---- the escalation is visible to them, and to nobody else ---- */
+    const escalations = await moderator.get("/api/admin/returns?status=ESCALATED");
+    t.check(escalations.status === 200, "the escalation queue loads", escalations.status);
+    t.check(
+      escalations.json.rows.some((r: { id: string }) => r.id === returnId),
+      "and this request is in it — the only place an escalation can be seen",
+      escalations.json.rows?.length
+    );
+
+    const settledRes = await moderator.post(`/api/admin/returns/${returnId}/decide`, {
+      approve: true,
+      note: "Photo is ambiguous. Refunding.",
+    });
+    t.check(settledRes.status === 200 && settledRes.json.status === "APPROVED",
+      "the escalation is approved",
+      `${settledRes.status} ${settledRes.json?.status ?? settledRes.json?.code}`);
+    t.check(settledRes.json.refundId != null, "and the response names the refund it produced",
+      settledRes.json?.refundId);
 
     const refund = await prisma.refund.findFirst({
       where: { orderItemId: sale.id },
@@ -243,14 +287,12 @@ void main(
      * code. Worth asserting here because approval is now a second route into
      * money moving.
      */
-    const secondAttempt = await approveReturn({
-      id: returnId,
-      decidedById: moderatorId,
-      allowEscalated: true,
+    const secondAttempt = await moderator.post(`/api/admin/returns/${returnId}/decide`, {
+      approve: true,
     });
-    t.check(!secondAttempt.done && secondAttempt.reason === "wrong-state",
+    t.check(secondAttempt.status === 409 && secondAttempt.json.code === "WRONG_STATE",
       "approving an approved request does nothing",
-      secondAttempt.done ? "done" : secondAttempt.reason);
+      `${secondAttempt.status} ${secondAttempt.json?.code}`);
     t.check((await prisma.refund.count({ where: { orderItemId: sale.id } })) === 1,
       "and exactly one refund exists for the line");
 

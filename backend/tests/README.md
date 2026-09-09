@@ -123,6 +123,34 @@ match a UUID or a provider reference another suite left behind: one full run
 failed on `no trace of 0002` while the same suite passed standalone. It is a
 scoping problem in the assertion, not a leak.
 
+**Run a new suite against the STUB providers before pushing, whatever your
+`.env` says.** CI sets `PAYMENT_PROVIDER=stub` and `KYC_PROVIDER=stub`; a local
+`.env` pointing at Stripe test mode is a *more permissive* environment, and a
+suite can pass there and fail in CI.
+
+The difference that bites is not the network, it is where state lives. The stub
+payment provider keeps intents in an in-process `Map`. A payment taken over HTTP
+therefore sits in the **API's** memory, and anything that tries to refund it
+from the test process looks in an empty one — every refund comes back "could not
+confirm with the provider". Under Stripe there is no map and any process can
+refund, so the same code passes.
+
+`fixtures.ts` documents this on `ownListing`, which exists because of it. It
+happened again anyway, in `return-routes`: an approval was driven by importing
+`approveReturn()` directly, on the reasonable-sounding argument that the TOTP
+step-up was another suite's job. It passed locally and failed CI with four
+`refund-failed`s. The rule that follows:
+
+> **Anything that has to reach the payment provider must be driven through the
+> server that took the payment.** If that means a TOTP step-up in your suite,
+> do the step-up.
+
+```bash
+PAYMENT_PROVIDER=stub KYC_PROVIDER=stub PAYOUT_PROVIDER=stub npm test -- <suite>
+```
+
+The API has to be started with the same values, not just the test process.
+
 **`browser-dashboard` can fail on `/admin/catalogue` for want of CPU, not
 correctness.** It navigates with `waitUntil: "networkidle"`, and the
 authenticated catalogue table renders twenty-five `next/image` thumbnails of
@@ -315,11 +343,22 @@ code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-1,287 assertions across 35 suites, all passing, in 796 seconds — measured with
-Postgres, Redis, the API and a production frontend build all up, and with the
-outbox drained first (see above). Redis matters more than it looks: without
-`REDIS_URL` the `ratelimit` and `cache` suites skip most of their sections and
-report 10 and 8 instead of 25 and 44.
+**1,263 assertions across 35 suites, all passing, in 696 seconds** — on the
+providers `.env.example` ships, which is also what CI runs. Measured with
+Postgres, Redis, the API and a production frontend build all up, and the outbox
+drained first (see above).
+
+**The total depends on the environment, and two variables move it a lot.**
+
+*Redis.* Without `REDIS_URL` the `ratelimit` and `cache` suites skip most of
+their sections and report 10 and 8 instead of 25 and 44 — 51 assertions that
+look like they ran and did not.
+
+*The payment and identity providers.* Against Stripe test mode the same suites
+report **1,293**: `identity` gains 3, `identity-stale` 7, and `browser-identity`
+20, because the sections asserting real Stripe behaviour stop skipping. A higher
+number is not a better run — it is a different one, and the stub figure is the
+one quoted everywhere else because it is what a fresh checkout and CI produce.
 
 | Suite | Covers |
 |---|---|
