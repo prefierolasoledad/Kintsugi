@@ -337,8 +337,9 @@ ordersRouter.post("/:id/pay", async (req, res) => {
  * The buyer confirms an item arrived.
  *
  * Deliberately the buyer's action, not the seller's: a seller marking their own
- * parcel delivered is not evidence of anything, and once payouts exist this
- * confirmation is what releasing money would hang on.
+ * parcel delivered is not evidence of anything — and this endpoint is what
+ * releasing money hangs on, since `deliveredAt` starts the payout hold.
+ * A seller who could call it would be starting their own clock. See ADR 0030.
  */
 ordersRouter.post("/items/:itemId/delivered", async (req, res) => {
   try {

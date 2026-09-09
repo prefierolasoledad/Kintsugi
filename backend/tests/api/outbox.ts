@@ -107,6 +107,32 @@ void main(
     await resetTransport();
     CONSUMERS.push(spy);
 
+    /**
+     * CLEAR ANYONE ELSE'S UNPUBLISHED ROWS FIRST.
+     *
+     * `relayOnce()` claims every unpublished row, not this suite's, so the
+     * assertions below — "one event published" — are only about this suite's
+     * own row if nothing else is waiting. Almost every other suite emits
+     * notifications, and with `RELAY_IN_PROCESS=false` nothing drains them, so
+     * running suites individually leaves a backlog. This suite then reported
+     * `one event published — 51`: true, and a diagnosis of nothing.
+     *
+     * Drained rather than deleted: publishing them is what the relay is for,
+     * and deleting notification events to make a test pass is the wrong habit
+     * to encode in a fixture. Bounded, so a relay genuinely stuck in a loop
+     * fails the suite instead of hanging it.
+     */
+    let drained = 0;
+    for (let pass = 0; pass < 40; pass += 1) {
+      const cleared = await relayOnce();
+      if (cleared.published === 0) break;
+      drained += cleared.published;
+    }
+    if (drained > 0) {
+      t.note(`drained ${drained} event(s) left unpublished by other suites`);
+    }
+    spy.seen.length = 0;
+
     const user = await prisma.user.create({
       data: {
         email: `${TAG}@kintsugi.test`,

@@ -144,7 +144,7 @@ Ship docs with the code, in the same change:
 
 ```bash
 cd backend
-npm test                    # everything — 890 assertions, 26 suites
+npm test                    # everything — 1,200 assertions, 33 suites
 npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```

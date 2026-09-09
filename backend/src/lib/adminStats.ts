@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import {
   OrderStatus,
   ListingStatus,
+  PayoutStatus,
   RefundStatus,
   ReportStatus,
 } from "../generated/prisma/enums";
@@ -752,6 +753,160 @@ export async function listDeliveries(opts: {
       };
     }),
     byStatus,
+    total,
+    page,
+    pages,
+    pageSize,
+  };
+}
+
+/* ================================================================== *
+ * Payouts
+ * ================================================================== */
+
+/**
+ * Money leaving the platform, in one list.
+ *
+ * The seller's own page answers "where is my money". This answers the harder
+ * question, which is asked by whoever has to reconcile the bank statement:
+ * what did we send, to whom, and did it land. Those are different views of the
+ * same rows and both are needed — a seller cannot see a payout that failed for
+ * another seller, and that is exactly the row that needs finding.
+ *
+ * FAILED IS THE DEFAULT INTERESTING CASE, so the counts are returned for the
+ * whole filtered set rather than the page. A PENDING row that has sat there
+ * since yesterday is a stuck transfer, and the number is what makes it
+ * visible without reading every row.
+ *
+ * Searchable by seller email, seller name, payout id or the provider's
+ * transfer id — the four things somebody actually arrives holding. Nobody
+ * starts a reconciliation with a sellerId.
+ */
+export async function listPayouts(opts: {
+  q?: string;
+  status?: "ALL" | PayoutStatus;
+  page?: number;
+}) {
+  const q = opts.q?.trim();
+
+  /**
+   * A payout hangs off SellerProfile, whose id is the profile's, not the
+   * user's — so an email has to be resolved to profile ids before it can
+   * filter anything.
+   */
+  let sellerIds: string[] | undefined;
+  if (q) {
+    const profiles = await prisma.sellerProfile.findMany({
+      where: {
+        user: {
+          OR: [
+            { email: { contains: q, mode: "insensitive" } },
+            { name: { contains: q, mode: "insensitive" } },
+          ],
+        },
+      },
+      select: { id: true },
+      take: 200,
+    });
+    sellerIds = profiles.map((p) => p.id);
+  }
+
+  const where = {
+    ...(opts.status && opts.status !== "ALL" ? { status: opts.status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { id: q },
+            { providerTransferId: q },
+            ...(sellerIds && sellerIds.length > 0 ? [{ sellerId: { in: sellerIds } }] : []),
+          ],
+        }
+      : {}),
+  };
+
+  const total = await prisma.payout.count({ where });
+  const { skip, page, pages, pageSize } = paginate(opts.page ?? 1, total);
+
+  const rows = await prisma.payout.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    skip,
+    take: pageSize,
+    select: {
+      id: true,
+      amountCents: true,
+      nettedCents: true,
+      currency: true,
+      status: true,
+      failureReason: true,
+      providerTransferId: true,
+      createdAt: true,
+      completedAt: true,
+      seller: {
+        select: {
+          id: true,
+          connectAccountId: true,
+          user: { select: { id: true, email: true, name: true } },
+        },
+      },
+      items: { select: { orderItemId: true, amountCents: true, reversedAt: true } },
+    },
+  });
+
+  /** Counts for the whole filtered set, not just this page. */
+  const grouped = await prisma.payout.groupBy({
+    by: ["status"],
+    where,
+    _count: { _all: true },
+  });
+  const byStatus = Object.fromEntries(grouped.map((g) => [g.status, g._count._all]));
+
+  /**
+   * Sums over everything matching the filter, because "how much have we sent"
+   * is not answerable from a page of twenty-five. Netted is separate: it is
+   * money we kept back, not money we sent, and adding the two would overstate
+   * what left the account.
+   */
+  const paidTotal = await prisma.payout.aggregate({
+    where: { ...where, status: PayoutStatus.PAID },
+    _sum: { amountCents: true, nettedCents: true },
+  });
+
+  /** Outstanding seller debt, which is a platform liability and not per-page. */
+  const debt = await prisma.payoutDebt.aggregate({ _sum: { amountCents: true } });
+
+  return {
+    rows: rows.map((p) => ({
+      id: p.id,
+      amountCents: p.amountCents,
+      nettedCents: p.nettedCents,
+      currency: p.currency,
+      status: p.status,
+      failureReason: p.failureReason,
+      providerTransferId: p.providerTransferId,
+      // The connected account id is here because a reconciliation ends in the
+      // provider's dashboard, and this is the value to paste into it.
+      connectAccountId: p.seller.connectAccountId,
+      seller: {
+        profileId: p.seller.id,
+        userId: p.seller.user.id,
+        email: p.seller.user.email,
+        name: p.seller.user.name,
+      },
+      itemCount: p.items.length,
+      reversedCents: p.items
+        .filter((i) => i.reversedAt !== null)
+        .reduce((sum, i) => sum + i.amountCents, 0),
+      items: p.items,
+      createdAt: p.createdAt,
+      completedAt: p.completedAt,
+    })),
+    byStatus,
+    totals: {
+      paidCents: paidTotal._sum.amountCents ?? 0,
+      nettedCents: paidTotal._sum.nettedCents ?? 0,
+      outstandingDebtCents: debt._sum.amountCents ?? 0,
+    },
     total,
     page,
     pages,

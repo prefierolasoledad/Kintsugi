@@ -33,8 +33,9 @@ export default function HowItWorksPage() {
 
       <h2>4. You get paid</h2>
       <p>
-        Payment is held until the buyer confirms the item arrived as described,
-        then released to you. See{" "}
+        The buyer pays Kintsugi, not you. Once they confirm the item arrived and
+        the seven-day return window closes, the money is yours to take — you ask
+        for it whenever you like rather than waiting for a payout day. See{" "}
         <a href="/sell/payouts" className="text-gold-dim underline">
           payouts
         </a>{" "}
@@ -42,7 +43,7 @@ export default function HowItWorksPage() {
         <a href="/sell/seller-fees" className="text-gold-dim underline">
           seller fees
         </a>{" "}
-        for what&apos;s taken out before that happens.
+        for what we charge, which is nothing.
       </p>
     </InfoPage>
   );

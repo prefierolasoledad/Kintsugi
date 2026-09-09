@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { reverseForRefund } from "./payouts";
 import {
   PAYMENT_PROVIDER,
   PaymentError,
@@ -234,6 +235,22 @@ export async function issueRefund(input: {
       });
     }
 
+    /**
+     * CLAW BACK WHAT THE SELLER WAS ALREADY PAID, if anything.
+     *
+     * The hold period exists so this is rare — normally the refund lands long
+     * before the payout does, and this finds nothing. When it does find a paid
+     * line it reverses the transfer, and records a debt if the money has
+     * already been withdrawn.
+     *
+     * `void`-ed and error-swallowing, exactly like the notification below it
+     * and for the same reason: the buyer has already been refunded, and a
+     * problem clawing money back from a seller must not undo that.
+     */
+    if (settled && input.orderItemId) {
+      void reverseForRefund(input.orderItemId, input.amountCents);
+    }
+
     if (settled) {
       void events.refundIssued({
         buyerUserId: order.buyerId,
@@ -370,6 +387,8 @@ export async function settleRefundFromProvider(input: {
     select: {
       id: true,
       orderId: true,
+      // Needed to claw back the seller's side of this line, if it was paid.
+      orderItemId: true,
       amountCents: true,
       currency: true,
       status: true,
@@ -406,6 +425,18 @@ export async function settleRefundFromProvider(input: {
         where: { id: refund.orderId },
         data: { status: OrderStatus.REFUNDED },
       });
+    }
+
+    /**
+     * And claw back the seller's side here too.
+     *
+     * A refund that settles by webhook rather than synchronously is the SAME
+     * event as far as a payout is concerned. Hooking only the synchronous path
+     * would mean an asynchronous refund silently left the seller holding money
+     * the buyer had been given back.
+     */
+    if (refund.orderItemId) {
+      void reverseForRefund(refund.orderItemId, refund.amountCents);
     }
 
     // Told now rather than when the refund was requested. issueRefund only

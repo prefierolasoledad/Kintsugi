@@ -1,4 +1,5 @@
 import { Router, raw } from "express";
+import { prisma } from "../lib/prisma";
 import type Stripe from "stripe";
 import { OrderStatus } from "../generated/prisma/enums";
 import {
@@ -75,6 +76,9 @@ webhooksRouter.post(
       if (event.type.startsWith("identity.verification_session.")) {
         return await handleIdentity(event, res);
       }
+      if (event.type === "account.updated") {
+        return await handleConnectAccount(event, res);
+      }
 
       // Not ours. Acknowledged so Stripe stops resending it.
       return res.status(200).json({ received: true, ignored: event.type });
@@ -86,6 +90,67 @@ webhooksRouter.post(
     }
   }
 );
+
+/**
+ * Whether a connected account can actually receive money.
+ *
+ * THIS IS THE ONLY WAY TO KNOW. Onboarding is asynchronous — Stripe verifies
+ * identity, bank details and tax status after the seller finishes the form —
+ * so `payouts_enabled` flips minutes or days later, and only this event says
+ * so. Without it a seller would sit permanently locked out of their own money
+ * with nothing to explain why.
+ *
+ * It is mirrored onto `payoutsReady` and NEVER onto `payoutsEnabled`, which is
+ * this platform's own verification decision. Letting a payments provider write
+ * that column would mean a seller blocked by moderation being quietly
+ * reinstated because their bank details checked out. See ADR 0030.
+ */
+async function handleConnectAccount(event: Stripe.Event, res: import("express").Response) {
+  const account = event.data.object as Stripe.Account;
+
+  const profile = await prisma.sellerProfile.findFirst({
+    where: { connectAccountId: account.id },
+    select: { id: true, payoutsReady: true, connectOnboardedAt: true },
+  });
+
+  if (!profile) {
+    // An account this deployment does not know about — most likely another
+    // environment sharing the same Stripe account. Acknowledged, not retried.
+    return res.status(200).json({ received: true, ignored: `account.updated:${account.id}` });
+  }
+
+  const ready = account.payouts_enabled === true;
+
+  /**
+   * `payoutsReady` tracks the provider in both directions — an account can lose
+   * the ability to receive money, and pretending otherwise would leave a seller
+   * being told to expect a transfer that will be refused.
+   *
+   * `connectOnboardedAt` is WRITE-ONCE. Stripe sends this event repeatedly over
+   * an account's life, and stamping `now()` each time would keep moving the day
+   * the seller submitted their details — a fact that cannot change after it
+   * happens. It is only cleared if the provider says details are no longer
+   * submitted at all.
+   */
+  await prisma.sellerProfile.update({
+    where: { id: profile.id },
+    data: {
+      payoutsReady: ready,
+      connectOnboardedAt: account.details_submitted
+        ? (profile.connectOnboardedAt ?? new Date())
+        : null,
+    },
+  });
+
+  if (ready !== profile.payoutsReady) {
+    console.log(
+      `Connect account ${account.id} for seller ${profile.id} is now ` +
+        `${ready ? "able" : "unable"} to receive payouts`
+    );
+  }
+
+  return res.status(200).json({ received: true, payoutsReady: ready });
+}
 
 async function handlePayment(event: Stripe.Event, res: import("express").Response) {
   const parsed = readPaymentEvent(event);

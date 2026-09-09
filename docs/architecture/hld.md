@@ -250,8 +250,8 @@ of duplicating it.
 
 ## 6. Provider seams
 
-Six concerns sit behind an interface with two implementations — a real one and
-a stub — selected by an environment variable. Each is a single module, so
+Seven concerns sit behind an interface with two implementations — a real one
+and a stub — selected by an environment variable. Each is a single module, so
 changing provider means editing one file.
 
 | Concern | Module | Real | Stub | Selected by |
@@ -262,6 +262,7 @@ changing provider means editing one file.
 | File storage | `lib/storage.ts` | S3-compatible object storage (MinIO locally) | Local disk | `STORAGE_DRIVER` |
 | SMS | `lib/smsProvider.ts` | Twilio, over its REST API | In-memory; returns the code so the flow can be finished without a handset | `SMS_PROVIDER` |
 | Notification transport | `lib/notifyTransport.ts` | Kafka, with the relay and workers as their own processes | The relay hands events straight to the same consumer functions, in-process | `NOTIFY_TRANSPORT` |
+| Payouts | `lib/payoutProvider.ts` | Stripe Connect Express: accounts, onboarding links, transfers, reversals | In-memory accounts and deterministic transfer ids; records the transfer without sending it | `PAYOUT_PROVIDER` |
 
 **The stubs are not placeholders for missing code.** They are what CI runs
 against: the suite drives the whole purchase, refund and verification flow with
@@ -278,9 +279,22 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
 
 ## 7. Known limitations
 
-- **No payouts to sellers.** The largest remaining gap. Money reaches the
-  platform and can be refunded from it; paying sellers out needs Stripe Connect.
-  `payoutsEnabled` is set by identity verification and nothing consumes it yet.
+- **Payouts have never run against Stripe Connect.** The path is built and
+  exercised end to end — claim, transfer, reversal, debt netting, both screens —
+  but only under `PAYOUT_PROVIDER=stub`. No connected account has been created,
+  no transfer issued, and no `account.updated` webhook has ever arrived from
+  Stripe, so what is proven is the claim ordering and the unique constraint
+  rather than the provider's behaviour. Same position as payments and identity.
+  [Plan 0002](../plans/0002-seller-payouts.md),
+  [ADR 0029](../adr/0029-payouts-separate-transfers-not-destination-charges.md),
+  [ADR 0030](../adr/0030-payout-eligibility-and-hold.md). Two questions the code
+  cannot answer are recorded there: who pays Stripe's Connect fees on a platform
+  that takes no cut, and how long the hold after delivery should be.
+- **Nothing calls `sendPendingPayouts`.** A payout claims its lines before the
+  transfer, so a crash in between leaves money reserved and unsent. The function
+  that finishes those claims is written and covered, and has to be invoked — by
+  an operator or a cron, like outbox retention and the stale-delivery sweep.
+  Compose has no scheduler.
 - **Failover is manual, and nothing is automatically replaced.** Both tiers can
   now run more than one replica — rate limits and the cache are in Redis
   ([ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md),
@@ -318,7 +332,7 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
   page. Denormalising onto `Listing` is the optimisation, at the cost of
   keeping it consistent.
 - **The suite needs the real stack, and takes about thirteen minutes.** Nothing
-  is mocked — 1,084 assertions across 31 suites drive a real Postgres, the real
+  is mocked — 1,200 assertions across 33 suites drive a real Postgres, the real
   Express API, and a production build of the storefront under a real browser. The
   cost of that choice is that `npm test` cannot run against nothing: it needs a
   database, a Redis, and both servers up. See

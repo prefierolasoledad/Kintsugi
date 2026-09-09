@@ -16,9 +16,11 @@ export default function TrustSafetyPage() {
 
       <h2>Payment is held, not handed over</h2>
       <p>
-        A buyer&apos;s payment sits in escrow until they confirm the item arrived as
-        described. Sellers aren&apos;t paid up front, and buyers aren&apos;t paying into a
-        void — see{" "}
+        A buyer pays Kintsugi rather than the seller, and we hold it until they
+        confirm the item arrived as described and the return window has closed.
+        It isn&apos;t a legal escrow account — it&apos;s our balance, and we pass
+        it on. Sellers aren&apos;t paid up front, and buyers aren&apos;t paying
+        into a void — see{" "}
         <a href="/sell/payouts" className="text-gold-dim underline">
           payouts
         </a>{" "}

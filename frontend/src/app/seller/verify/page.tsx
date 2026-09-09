@@ -244,18 +244,18 @@ export default function VerifyPage() {
               </div>
 
               {verification.payoutsEnabled && (
-                <div className="mt-6 rounded-2xl border border-line bg-paper-card p-6">
-                  <div className="flex items-baseline justify-between">
-                    <h2 className="text-base font-semibold text-ink">Payouts</h2>
-                    <span className="rounded-full border border-gold/30 px-2.5 py-1 text-xs font-medium text-gold-dim">
-                      Planned
-                    </span>
-                  </div>
+                <div className="mt-6 rounded-2xl border border-sage/50 bg-sage/20 p-6">
+                  <h2 className="text-base font-semibold text-ink">Payouts are unlocked</h2>
                   <p className="mt-2 text-sm text-ink-dim">
-                    Nothing to pay out. Payments run against a sandbox, so no real
-                    money has ever moved — and there&apos;s no payout pipeline yet
-                    to move it with.
+                    Connect a payout account to see what you&apos;re owed and send it
+                    to yourself.
                   </p>
+                  <Link
+                    href="/seller/payouts"
+                    className="mt-5 inline-block rounded-full bg-gold-dim px-5 py-2.5 text-sm font-semibold text-paper transition hover:brightness-90"
+                  >
+                    Go to payouts
+                  </Link>
                 </div>
               )}
 

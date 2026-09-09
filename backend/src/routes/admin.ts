@@ -40,6 +40,7 @@ import {
   recentOrders,
   topSellers,
   listDeliveries,
+  listPayouts,
   type Range,
 } from "../lib/adminStats";
 import {
@@ -596,6 +597,30 @@ adminRouter.get("/deliveries", async (req, res) => {
     );
   } catch (err) {
     fail(res, err, "Could not load the delivery log.");
+  }
+});
+
+/**
+ * Money leaving the platform.
+ *
+ * Read only, deliberately. There is no admin "retry this payout" button here:
+ * a retry moves money, and the safe way to move money again is the seller's
+ * own claim-then-transfer path, which cannot pay the same item twice. An admin
+ * endpoint that transferred directly would bypass the claim and be the one way
+ * to double-pay somebody.
+ */
+adminRouter.get("/payouts", async (req, res) => {
+  try {
+    const status = z
+      .enum(["ALL", "PENDING", "PAID", "FAILED"])
+      .catch("ALL")
+      .parse(req.query.status ?? "ALL");
+
+    res.json(
+      await listPayouts({ q: queryParam(req), status, page: pageParam(req) })
+    );
+  } catch (err) {
+    fail(res, err, "Could not load the payout log.");
   }
 });
 

@@ -153,6 +153,82 @@ export type DocumentSubmission = {
   documentNumber: string;
 };
 
+/* ------------------------------------------------------------------ *
+ * Payouts
+ * ------------------------------------------------------------------ */
+
+export type PayoutSummary = {
+  currency: string;
+  paidCents: number;
+  payableCents: number;
+  heldCents: number;
+  heldUntil: string | null;
+  /** Owed, but the account cannot receive it. Actionable, unlike `held`. */
+  withheldCents: number;
+  /** Sold and paid for, but not delivered to the buyer yet. */
+  inFlightCents: number;
+  /** Refunded, or a line the seller couldn't send. Shown so the figures add up. */
+  notEarnedCents: number;
+  debtCents: number;
+  gates: { payoutsEnabled: boolean; payoutsReady: boolean; onboarded: boolean };
+};
+
+export type PayableLine = {
+  orderItemId: string;
+  orderId: string;
+  title: string;
+  amountCents: number;
+  deliveredAt: string;
+};
+
+export type PayoutRow = {
+  id: string;
+  amountCents: number;
+  nettedCents: number;
+  currency: string;
+  status: "PENDING" | "PAID" | "FAILED";
+  failureReason: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  items: { orderItemId: string; amountCents: number; reversedAt: string | null }[];
+};
+
+export function getPayouts() {
+  return request<{
+    summary: PayoutSummary;
+    holdDays: number;
+    payable: PayableLine[];
+    history: PayoutRow[];
+    isStub: boolean;
+  }>("/payouts");
+}
+
+export function startPayoutOnboarding() {
+  return request<{ url: string; external: boolean; expiresAt: string }>("/payouts/account", {
+    method: "POST",
+  });
+}
+
+export function refreshPayoutAccount() {
+  return request<{ payoutsReady: boolean; detailsSubmitted: boolean; pending: string[] }>(
+    "/payouts/account/refresh",
+    { method: "POST" }
+  );
+}
+
+/** Stub provider only. Stands in for Stripe's hosted onboarding. */
+export function completeStubOnboarding() {
+  return request<{ payoutsReady: boolean }>("/payouts/account/stub-complete", {
+    method: "POST",
+  });
+}
+
+export function runPayout() {
+  return request<{ paid: boolean; payoutId?: string; amountCents?: number }>("/payouts/run", {
+    method: "POST",
+  });
+}
+
 export function getVerification() {
   return request<{ verification: Verification; attempts: KycAttempt[] }>("/verification");
 }
@@ -197,18 +273,6 @@ export function submitVerification(sessionId: string, input: DocumentSubmission)
     method: "POST",
     body: JSON.stringify(input),
   });
-}
-
-export function getPayouts() {
-  return request<{
-    payouts: {
-      enabled: boolean;
-      balanceCents: number;
-      currency: string;
-      history: unknown[];
-      note: string;
-    };
-  }>("/payouts");
 }
 
 export const DOCUMENT_TYPE_OPTIONS = [

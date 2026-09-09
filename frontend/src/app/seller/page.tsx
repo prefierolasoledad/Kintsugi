@@ -140,6 +140,14 @@ export default function SellerDashboard() {
               >
                 Sales
               </Link>
+              {/* "Where's my money" is the other question a seller opens this
+                  page to ask, so it gets a button rather than a menu entry. */}
+              <Link
+                href="/seller/payouts"
+                className="rounded-full border border-line px-5 py-2.5 text-sm font-medium text-ink transition hover:border-gold/40"
+              >
+                Payouts
+              </Link>
               <Link
                 href="/seller/listings/new"
                 className="rounded-full bg-gold-dim px-5 py-2.5 text-sm font-semibold text-paper transition hover:brightness-90"

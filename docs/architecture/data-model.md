@@ -15,6 +15,9 @@ erDiagram
     User ||--o{ Review : writes
     SellerProfile ||--o{ Listing : owns
     SellerProfile ||--o{ KycAttempt : "attempts"
+    SellerProfile ||--o{ Payout : "is paid by"
+    SellerProfile ||--o{ PayoutDebt : owes
+    Payout ||--o{ PayoutItem : covers
     Category ||--o{ Listing : contains
     Listing ||--o{ ListingImage : has
     Listing ||--o{ Review : receives
@@ -86,7 +89,17 @@ authenticated request.
 | `kycCountry` | text? | ISO 3166-1 alpha-2 |
 | `kycVerifiedAt` | timestamp? | |
 | `kycRejectionReason` | text? | Cleared on success |
-| `payoutsEnabled` | bool | True only alongside a `VERIFIED` decision |
+| `payoutsEnabled` | bool | **Our** gate. True only alongside a `VERIFIED` decision |
+| `payoutsReady` | bool | **The provider's** gate, mirrored from Connect's `payouts_enabled` |
+| `connectAccountId` | text? | Unique. The connected account, reused rather than recreated |
+| `connectOnboardedAt` | timestamp? | When details were submitted — not the same as ready |
+
+**Two gate columns, not one.** `payoutsEnabled` is this platform's identity
+decision; `payoutsReady` is Stripe's answer about whether it can pay this
+account. Both must be true before a transfer, and the `account.updated` webhook
+writes only the second — a webhook that could open the first would make
+[ADR 0007](../adr/0007-verification-gates-payouts.md) decorative.
+→ [ADR 0030](../adr/0030-payout-eligibility-and-hold.md)
 
 **No document data is stored here.** No image, no document number, no date of
 birth. Only a reference to the provider's decision.
@@ -264,6 +277,84 @@ not something that can honestly be said about a whole order.
 
 ---
 
+### `payouts`
+
+One request to move a seller's money. Created `PENDING` **before** the provider
+is called, so a crash in between is visible as an unfinished payout rather than
+an unrecoverable one.
+→ [ADR 0029](../adr/0029-payouts-separate-transfers-not-destination-charges.md)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sellerId` | uuid | FK → seller_profiles, cascade |
+| `amountCents` | int | Sum of its items, less any debt netted off at claim time |
+| `nettedCents` | int | What was withheld to settle an earlier failed reversal |
+| `currency` | text | `USD`. Nothing here is multi-currency |
+| `status` | enum | `PENDING` / `PAID` / `FAILED` |
+| `provider` | text? | `stub` or `stripe_connect` |
+| `providerTransferId` | text? | Unique. A **reference** to the transfer, never a copy of it |
+| `failureReason` | text? | The provider's own words, so a seller is told something actionable |
+| `completedAt` | timestamp? | Null while `PENDING` |
+
+The payout's own id is the provider's **idempotency key**. A retry after a
+timeout is the one case where this platform genuinely cannot tell whether the
+money already moved, so the key has to be stable across retries and unique per
+payout — which is exactly what a primary key is.
+
+A `FAILED` payout releases its lines: they become payable again. A `PENDING`
+one does not.
+
+### `payout_items`
+
+Which lines a payout covered, and the table that makes double-payment
+impossible.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `payoutId` | uuid | FK → payouts, cascade |
+| `orderItemId` | text | **Unique.** Deliberately *not* a foreign key |
+| `amountCents` | int | Snapshotted at claim time |
+| `reversedAt` | timestamp? | Set when a refund arrived after this line was paid |
+| `providerReversalId` | text? | Reference to the reversal |
+
+**`orderItemId` is unique, and that single index is the whole defence.** Both
+the eligibility query and the claim run in every concurrent payout attempt, and
+both will happily agree the same $50 is payable. The transaction that inserts
+first wins; the second fails on the constraint and rolls back its entire payout.
+A check-then-write version would let two runs read one balance and send it
+twice — the same bug shape as the five-simultaneous-charges one, with the same
+fix ([ADR 0013](../adr/0013-payment-provider-seam.md),
+[ADR 0016](../adr/0016-refunds-claim-then-refund.md)).
+
+**Not a relation, on purpose.** A payout statement has to stay readable after a
+listing is deleted, for the same reason `OrderItem.listingId` is nullable.
+
+`amountCents` is snapshotted for the same reason an order copies the shipping
+address: what a seller was paid must not change when a price does.
+
+`reversedAt` lives on the item rather than the payout because a refund is per
+line, so only part of a payout may come back.
+
+### `payout_debts`
+
+What a seller owes back when a refund landed after they were paid **and** the
+provider refused to reverse the transfer.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sellerId` | uuid | FK → seller_profiles, cascade |
+| `amountCents` | int | |
+| `currency` | text | `USD` |
+| `reason` | text | Why it exists, for a support conversation |
+| `orderItemId` | text? | The line that caused it, for tracing. Not a relation |
+| `settledAt` | timestamp? | Null until a later payout absorbs it |
+
+**Netted off, never invoiced.** The shortfall comes out of whatever the seller
+is owed next. A seller who never sells again keeps it — chasing the money would
+cost more than it recovers, and inventing a debt-collection path for a platform
+that takes no cut is not a trade worth making.
+→ [ADR 0030](../adr/0030-payout-eligibility-and-hold.md)
+
 ## Enums
 
 | Enum | Values |
@@ -274,6 +365,7 @@ not something that can honestly be said about a whole order.
 | `ReservationStatus` | `HELD`, `RELEASED`, `CONVERTED`, `EXPIRED` |
 | `OrderStatus` | `PENDING_PAYMENT`, `PROCESSING`, `PAID`, `FAILED`, `CANCELLED`, `REFUNDED` |
 | `FulfilmentStatus` | `UNFULFILLED`, `SHIPPED`, `DELIVERED`, `UNFULFILLABLE` |
+| `PayoutStatus` | `PENDING`, `PAID`, `FAILED` |
 
 `OrderStatus` and `FulfilmentStatus` are deliberately separate. Payment and
 delivery are independent facts — an order is `PAID` *and* `UNFULFILLED` for as
@@ -333,6 +425,20 @@ Enforced in the application layer unless noted:
     previous one used, so two live links can never exist at once.
 23. Changing or resetting a password revokes every refresh token for that user.
     A change keeps the caller's own; a reset keeps none.
+24. **An `OrderItem` appears in at most one `PayoutItem`, ever** — enforced by
+    the database. This is the whole double-payment defence: the claim inserts
+    before the provider is called, so a concurrent second run collides on the
+    constraint and rolls back rather than transferring the same money again.
+25. A `PENDING` `Payout` holds its lines. They are not payable again while it
+    sits there, which is what makes a crash between the claim and the transfer
+    leave money *owed* rather than payable twice.
+26. `payoutsReady` is written only from the provider's own answer — the
+    `account.updated` webhook or an explicit refresh — and never from a user
+    action. `payoutsEnabled` is never written by either.
+27. A reversed `PayoutItem` does not become payable again. The money came back
+    because the buyer was refunded, so nothing is owed.
+28. An unsettled `PayoutDebt` is netted off the next payout and is never
+    invoiced. A seller who stops selling keeps the shortfall.
 
 ## Migrations
 
@@ -355,6 +461,7 @@ Enforced in the application layer unless noted:
 | `add_push_subscriptions` | `push_subscriptions` |
 | `add_phone_and_sms_verification` | `users.phone` / `phoneVerifiedAt` / `smsConsentAt`, `phone_verifications` |
 | `defer_sms_in_quiet_hours` | `DeliveryStatus.DEFERRED`, `notification_deliveries.notBefore` and its index |
+| `add_seller_payouts` | `payouts`, `payout_items`, `payout_debts`, `PayoutStatus`, and the four `seller_profiles` payout columns |
 
 ### `outbox_events`
 

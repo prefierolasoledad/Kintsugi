@@ -45,12 +45,20 @@ the old one, rather than an edit.
 | [0026](0026-delivery-idempotency.md) | A delivery ledger, claimed before the provider is called | Accepted |
 | [0027](0027-notification-consent-and-preferences.md) | Consent before delivery: verified numbers, per-type preferences, unsubscribe | Accepted |
 | [0028](0028-sms-provider-twilio-behind-a-seam.md) | Twilio for SMS, behind the same seam as payments and identity | Accepted |
+| [0029](0029-payouts-separate-transfers-not-destination-charges.md) | Pay sellers with separate transfers, not destination charges | Accepted |
+| [0030](0030-payout-eligibility-and-hold.md) | What makes money payable, and the ledger that stops it being paid twice | Accepted |
 
-> **Proposed** means the decision is made and argued but **no code implements
-> it**. Nothing in this table is in that state any more: 0024 and 0025 landed
-> with phase 1 of [plan 0001](../plans/0001-multi-channel-notifications.md),
-> 0026 and 0027 with phases 2-4, and 0028 with phase 4. Each record says what of
-> it exists — including, in 0028, the two things that do not yet.
+> **All thirty are implemented.** 0024 and 0025 landed with phase 1 of
+> [plan 0001](../plans/0001-multi-channel-notifications.md), 0026 and 0027 with
+> phases 2-4, and 0028 with phase 4. 0029 and 0030 were Proposed for one day and
+> landed with [plan 0002](../plans/0002-seller-payouts.md).
+>
+> **Accepted is not the same as proven against a provider.** The payout path in
+> 0029 and 0030 is exercised end to end under `PAYOUT_PROVIDER=stub` and nothing
+> more: no connected account has been created and no transfer has been issued.
+> Two questions in those records are business decisions still open — who absorbs
+> Connect's fees on a platform taking no cut, and whether seven days is the right
+> hold. Neither blocks the code, and both could change the numbers.
 
 ## Adding one
 

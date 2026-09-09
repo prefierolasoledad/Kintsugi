@@ -78,6 +78,8 @@ notification pipeline has its own diagram in
 | `wishlist.ts` | Saved items |
 | `stripeClient.ts` | The shared Stripe client. Separate from `paymentProvider.ts` because payments and identity are independently configurable |
 | `verification.ts` | Applies an identity decision to a seller profile; sets `payoutsEnabled` |
+| `payoutProvider.ts` | The Connect seam: `createAccount`, `onboardingLink`, `accountStatus`, `transfer`, `reverseTransfer`. Stub and `stripe_connect` ([ADR 0029](../adr/0029-payouts-separate-transfers-not-destination-charges.md)) |
+| `payouts.ts` | What a seller is owed and the claim that pays it: `payableItems`, `earningsSummary`, `claimPayout`, `sendClaimedPayout`, `sendPendingPayouts`, `reverseForRefund` ([ADR 0030](../adr/0030-payout-eligibility-and-hold.md)) |
 
 ### `lib/` reference — trust and administration
 
@@ -86,7 +88,7 @@ notification pipeline has its own diagram in
 | `reviews.ts` | Reviews, and ratings computed from rows rather than stored ([ADR 0009](../adr/0009-computed-ratings.md)) |
 | `moderation.ts` | Removals, suspensions and report resolution, each writing an append-only audit row |
 | `adminAuth.ts` | The separate short-lived admin session and its TOTP step-up ([ADR 0015](../adr/0015-admin-by-cli-grant-and-step-up.md)) |
-| `adminStats.ts` | Every read-only query behind the admin panel, including the delivery log |
+| `adminStats.ts` | Every read-only query behind the admin panel, including the delivery log and the payout log |
 | `passwordReset.ts` | Reset tokens: hashed, single-use, and no account enumeration ([ADR 0017](../adr/0017-password-change-and-reset.md)) |
 | `redis.ts` | Connection singleton shared by the limiter and the cache |
 
@@ -379,7 +381,79 @@ uncapped endpoint would let someone probe for the passing case.
 
 ---
 
-## 7. Frontend patterns
+## 7. Paying sellers out
+
+Buyers pay the platform; the platform transfers onward afterwards. Separate
+charges and transfers, never destination charges — the platform takes no cut,
+and a destination charge assumes one
+([ADR 0029](../adr/0029-payouts-separate-transfers-not-destination-charges.md)).
+
+```mermaid
+sequenceDiagram
+    participant S as Seller
+    participant API as sellerPayouts.ts
+    participant DB as Postgres
+    participant P as payoutProvider
+
+    S->>API: POST /seller/payouts/run
+    API->>DB: BEGIN
+    API->>DB: insert Payout (PENDING) + PayoutItem per line
+    Note over DB: payout_items.orderItemId is UNIQUE.<br/>A concurrent run collides here and rolls back.
+    API->>DB: COMMIT
+    API->>P: transfer(amount, account, idempotencyKey = payout id)
+    P-->>API: transfer id
+    API->>DB: Payout -> PAID
+```
+
+**The claim is committed before the provider is called.** Same ordering as
+claim-then-charge ([ADR 0013](../adr/0013-payment-provider-seam.md)) and
+claim-then-refund ([ADR 0016](../adr/0016-refunds-claim-then-refund.md)), and
+for the same reason: a read-then-transfer version lets two runs read the same
+balance and both send it.
+
+That ordering has a cost, and it is paid deliberately. A crash between the
+commit and the transfer leaves a `PENDING` payout with its lines claimed and no
+money sent — **owed rather than lost**. `sendPendingPayouts()` is what comes
+back for it, and nothing schedules that call.
+
+### What makes an item payable
+
+Five conditions, all of them ([ADR 0030](../adr/0030-payout-eligibility-and-hold.md)):
+
+| Condition | Why it is not optional |
+| --- | --- |
+| Its order is `PAID` | A delivered item on an unpaid order is money nobody ever handed over |
+| Its line is `DELIVERED` | `SHIPPED` is the seller's own claim about their own parcel |
+| `deliveredAt` is older than `PAYOUT_HOLD_DAYS` (7) | The window a dispute arrives in |
+| No `PENDING` or `SUCCEEDED` refund touches it | Including order-level refunds, which withhold every line of that order |
+| It is in no `PayoutItem` already | A `PENDING` payout counts as spoken for |
+
+Both gates must also pass: `payoutsEnabled` (our identity check, ADR 0007) and
+`payoutsReady` (the provider's). The `account.updated` webhook mirrors Stripe's
+`payouts_enabled` onto `payoutsReady` and **never** onto `payoutsEnabled` —
+they are two gates from two authorities, and a webhook that could open ours
+would make ADR 0007 decorative.
+
+### A refund that lands after the money left
+
+```
+refund settles → reverseForRefund(orderItemId, cents)
+                    ↓
+        item was paid?  no  → nothing to do
+                    ↓ yes
+        provider.reverseTransfer()
+                    ↓
+        succeeded → PayoutItem.reversedAt set
+        refused   → PayoutDebt row, netted off the next payout
+```
+
+A refused reversal becomes a debt rather than an invoice. The seller is never
+billed; the shortfall comes off whatever they are owed next, and a seller who
+never sells again keeps the money. Chasing it would cost more than it recovers.
+
+---
+
+## 8. Frontend patterns
 
 **Server fetch, client arrangement.** `app/page.tsx` is a server component that
 fetches categories and both shelves in parallel, then hands them to
@@ -400,7 +474,7 @@ instead of showing a control that does nothing. There is no non-functional
 
 ---
 
-## 8. Conventions
+## 9. Conventions
 
 - **Validation at the boundary.** Zod at the route; typed values inward.
 - **`async` handlers are wrapped.** Express 4 does not catch rejected promises;

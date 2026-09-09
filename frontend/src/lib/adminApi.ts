@@ -400,6 +400,39 @@ export function getDeliveries(
   );
 }
 
+export type PayoutStatus = "PENDING" | "PAID" | "FAILED";
+
+export type AdminPayoutRow = {
+  id: string;
+  amountCents: number;
+  /** Kept back to settle a refund from an earlier payout, not sent. */
+  nettedCents: number;
+  currency: string;
+  status: PayoutStatus;
+  failureReason: string | null;
+  providerTransferId: string | null;
+  /** What to paste into the provider's dashboard. */
+  connectAccountId: string | null;
+  seller: { profileId: string; userId: string; email: string; name: string };
+  itemCount: number;
+  reversedCents: number;
+  items: { orderItemId: string; amountCents: number; reversedAt: string | null }[];
+  createdAt: string;
+  completedAt: string | null;
+};
+
+export type PayoutTotals = {
+  paidCents: number;
+  nettedCents: number;
+  outstandingDebtCents: number;
+};
+
+export function getPayoutLog(opts: { q?: string; status?: string; page?: number } = {}) {
+  return request<
+    Paged<AdminPayoutRow> & { byStatus: Record<string, number>; totals: PayoutTotals }
+  >(`/payouts${qs(opts)}`);
+}
+
 export function getReports(status: "OPEN" | "RESOLVED" | "DISMISSED" | "ALL" = "OPEN") {
   return request<{ reports: Report[]; counts: Overview["reports"] }>(
     `/reports?status=${status}`

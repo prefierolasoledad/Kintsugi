@@ -68,14 +68,81 @@ tells you nothing. Nothing else needs that relay; the delivery suites call the
 consumers directly. The suite detects the clash and names it rather than
 failing five assertions in a row.
 
-**One assertion in `payment-safety` is flaky in a full run, and it is worth
-knowing why.** Section 10 checks that no card data is persisted by scanning
+**If you interrupt a run, put the catalogue back.** Cleanup is wired to
+`SIGINT`, so Ctrl+C is handled — but a `SIGKILL`, an OOM kill, or a harness
+stopping the process skips it, and the suites buy real listings. A listing left
+`SOLD q=0` disappears from the shop, which is the failure this whole section
+exists to prevent. Recovery, in order:
+
+```bash
+# 1. What was left behind?
+#    Non-ACTIVE listings and kt.* users are the two things that matter.
+# 2. Delete the test accounts (this cascades their orders and reservations):
+npx tsx -e 'import "dotenv/config"; import {purgeStaleTestData} from "./tests/lib/fixtures"; \
+  purgeStaleTestData().then(n => console.log("purged", n))'
+# 3. Restore any SEEDED listing left SOLD, by hand.
+# 4. Drain the outbox by running the outbox suite once.
+```
+
+**Step 3 has no automatic fix, and two plausible ones do not work.**
+`purgeStaleTestData()` deletes accounts only — it does not restore borrowed
+listings, because the record of what they looked like beforehand lives in the
+`Scope` of the process that died. And re-running `seed:scale` does not repair
+them either: it uses `createMany({ skipDuplicates: true })`, so an existing row
+is skipped rather than reset. Its deterministic PRNG makes re-runs generate
+identical data; it does not make them heal mutated data. Restoring the original
+stock level means replaying that PRNG, so in practice it is set back to
+`ACTIVE` with quantity 1 and noted.
+
+**Running suites individually with the relay off leaves rows that break
+`outbox` later, and it looks like a real failure.** Almost every suite emits
+notifications, each of which writes an `outbox_events` row. With
+`RELAY_IN_PROCESS=false` nothing publishes them, so they accumulate — and
+`outbox` drains *everything* unpublished rather than only its own row, then
+reports `one event published — 51`. True, and nothing to do with the outbox.
+Drain them by running `outbox` once and discarding the result; the next run is
+clean. Worth doing before any run whose numbers you intend to quote.
+
+**One assertion in `payment-safety` was flaky in a full run, and the reason is
+instructive.** Section 2 borrowed *any* listing with at least one in stock and
+then asserted it had sold **out** — `SOLD`, quantity 0 — which is only true of
+a single-stock listing. That held for as long as the seeded catalogue was
+entirely quantity-1, and started failing about one run in six once
+`seed:scale` began giving 15% of listings a quantity of 2-4: the assertion fired
+on a listing that had been correctly left `ACTIVE`. `claimListing` now takes
+`exactQuantity`, and section 2 asks for exactly one. Section 2b is where the
+multi-stock case belongs, and its own comment had already warned that the older
+tests only passed because they "happened to pick quantity-1 listings".
+
+**A separate assertion in `payment-safety` scans too broadly, and that one is
+still open.** Section 10 checks that no card data is persisted by scanning
 *every* order and order item in the database for the test card numbers — and
 also for their last four digits, `4242` and `0002`. The full-PAN checks are
 sound. The four-digit ones are not scoped to this suite's own rows, so they can
 match a UUID or a provider reference another suite left behind: one full run
 failed on `no trace of 0002` while the same suite passed standalone. It is a
 scoping problem in the assertion, not a leak.
+
+**`browser-dashboard` can fail on `/admin/catalogue` for want of CPU, not
+correctness.** It navigates with `waitUntil: "networkidle"`, and the
+authenticated catalogue table renders twenty-five `next/image` thumbnails of
+remote photos. On a machine where the optimiser takes more than thirty seconds
+to work through them, `networkidle` is never reached and the suite dies with a
+`page.goto` timeout mid-run — every assertion before it having passed. The same
+page settles in under a second when the optimiser has nothing to do. Measured,
+and confirmed unrelated to any application change by reverting to a clean build
+and reproducing it. If this fails for you and nothing else does, that is what it
+is.
+
+**`seed:scale` is not optional for `browser-catalog`.** It asserts a full second
+page and at least a hundred distinct photos, which the base seed's twenty-seven
+listings cannot satisfy. It is a real assertion about pagination, so it fails
+rather than skips — run `npm run seed:scale` first, as CI does.
+
+**Run `payouts` with `PAYOUT_PROVIDER=stub`, which is also the default.** The
+suite claims payouts and issues transfers, and against `stripe_connect` those
+would be real. It runs entirely below HTTP — no API needed — because what it is
+about is the claim and the ledger rather than a route.
 
 **Unset `KAFKA_BROKERS` unless a broker is actually up.** Pointing it at a dead
 broker is a configuration mistake, not a reason to fail: `retry-ladder` skips
@@ -248,11 +315,22 @@ code that is provably correct, which is a miserable hour to debug.
 
 ## Coverage
 
-890 assertions across 26 suites.
+1,200 assertions across 33 suites, all passing, in 775 seconds — measured with
+Postgres, Redis, the API and a production frontend build all up, and with the
+outbox drained first (see above). Redis matters more than it looks: without
+`REDIS_URL` the `ratelimit` and `cache` suites skip most of their sections and
+report 10 and 8 instead of 25 and 44.
 
 | Suite | Covers |
 |---|---|
 | `outbox` | notification and event commit together or not at all; two relays claim disjoint rows; a failed publish keeps the row |
+| `retry-ladder` | 5s/1m/15m delay topics then the DLQ; the broker section is gated on a broker being up |
+| `email-delivery` | the ledger claim before the provider, and what a refused send leaves behind |
+| `push-delivery` | a 410 from the push service unsubscribes rather than retrying forever |
+| `sms-delivery` | consent, verified numbers, the daily cap, and quiet hours deferring rather than dropping |
+| `operations` | the lag and DLQ health reports, outbox retention, and the stale-PENDING sweep |
+| `payouts` | the five payability conditions separately; the concurrent claim; refund before and after payout; a failed reversal becoming a debt |
+| `payout-routes` | the same six endpoints over HTTP: every one refused before verification, and the gate not leaking onto its neighbours |
 | `wishlist` | saving is inert; idempotent under concurrency; cross-user isolation |
 | `reviews` | verified-purchase gate; one review per person; the badge is earned |
 | `checkout-bff` | the proxy path a browser actually takes |

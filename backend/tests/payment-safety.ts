@@ -35,8 +35,12 @@ cleanupOnInterrupt(() => scope.cleanup());
  * has to compare against what this particular listing actually had. Comparing
  * against a hardcoded 1 silently corrupted a seeded set-of-three once.
  */
-async function orderFor(client: Client, minQuantity = 1) {
-  const listing = await scope.claimListing({ minQuantity });
+async function orderFor(
+  client: Client,
+  minQuantity = 1,
+  opts: { exactQuantity?: number } = {}
+) {
+  const listing = await scope.claimListing({ minQuantity, ...opts });
 
   const held = await client.post("/reservations", { listingId: listing.id, quantity: 1 });
   if (held.status !== 200 && held.status !== 201) {
@@ -110,7 +114,16 @@ void main(
      * ============================================================ */
     t.section("2 - paying an already-paid order");
     {
-      const { listing, order } = await orderFor(buyer);
+      /**
+       * EXACTLY one in stock, not merely one or more. This section asserts the
+       * listing sells OUT — `SOLD`, quantity 0 — which is only true of a
+       * single-stock listing. Borrowing "any listing with at least one" passed
+       * for as long as the catalogue was entirely quantity-1 and then began
+       * failing about one run in six once `seed:scale` introduced multi-stock
+       * listings, on a listing that was correctly left ACTIVE. Section 2b is
+       * where the multi-stock case belongs.
+       */
+      const { listing, order } = await orderFor(buyer, 1, { exactQuantity: 1 });
       const first = await pay(buyer, order.id, CARDS.succeeds);
       t.check(first.json?.outcome === "succeeded", "first payment succeeded");
 

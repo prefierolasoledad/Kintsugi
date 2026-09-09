@@ -12,11 +12,13 @@ a Next.js storefront, an Express API, and PostgreSQL.
 > **Status: in development, and working end to end.** Browsing, accounts,
 > selling, checkout, payments, refunds, order fulfilment, identity
 > verification, email, web push, SMS, and an admin dashboard all work — covered by
-> **1,084 assertions across 31 suites** (`npm test`), run against the real stack
-> rather than mocks — 1,094 with a Kafka broker present, which unlocks the
-> broker-gated section of `retry-ladder`. Payments and identity run against Stripe's test mode: no real
-> money moves, no real document is checked. Payouts to sellers are the one
-> significant feature not built. See [What's built](#whats-built).
+> **1,200 assertions across 33 suites** (`npm test`), run against the real stack
+> rather than mocks — 1,210 with a Kafka broker present, which unlocks the
+> broker-gated section of `retry-ladder`. Payments, identity and payouts run
+> against provider stubs or Stripe's test mode: no real money moves, no real
+> document is checked, and no seller has ever actually been paid. What is
+> missing now is an orchestrator, not a feature.
+> See [What's built](#whats-built).
 
 ---
 
@@ -32,6 +34,7 @@ a Next.js storefront, an Express API, and PostgreSQL.
 | Admin | CLI-granted role, TOTP step-up (`otplib`), separate short-lived session |
 | Payments | Stripe PaymentIntents + Refunds, behind a provider seam with a stub |
 | Identity | Stripe Identity, behind the same kind of seam |
+| Payouts | Stripe Connect Express — separate transfers, behind the same kind of seam |
 | Email | Nodemailer — console, Ethereal, or real SMTP |
 | Notifications | Transactional outbox → Kafka (KRaft) → per-channel workers, behind an `inline`/`kafka` transport seam |
 | Web push | VAPID / Web Push, with a service worker in the storefront |
@@ -104,7 +107,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**1,084 assertions across 31 suites**, and they drive the actual stack — a real
+**1,200 assertions across 33 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -122,6 +125,11 @@ with it. The interesting ones assert things a response cannot show you:
   for its whole TTL; it can only be caught by writing and reading again.
 - **`refunds`** covers the async webhook path, including a forged signature and
   a redelivery.
+- **`payouts`** asserts each of the five payability conditions separately —
+  including one whose only disqualification is that its order was never paid,
+  which a query joining on delivery alone would happily hand a seller — then
+  the concurrent claim, a refund before payout, a refund after payout, and a
+  failed reversal becoming a debt the next payout nets off.
 
 CI runs the whole thing on every push and pull request, against stub payment
 and identity providers so that a PR from a fork — which cannot see repository
@@ -287,6 +295,52 @@ own row and is silently dropped while the logs show a successful replay. Only a
 retry rung is consumed with reclaim. Verified end to end: replayed, picked up one
 rung later, `SENT` with `attempts=2`.
 
+```bash
+PAYOUT_PROVIDER=stub npx tsx scripts/payout-safety-demo.ts
+PAYOUT_PROVIDER=stub npx tsx scripts/payout-safety-demo.ts --lines 20 --racers 16
+```
+
+Kills a process in the gap between claiming a payout and transferring it. Not a
+simulated failure — a child process claims the payout and then **SIGKILLs its
+own pid**, so the row is committed by a process that no longer exists and gets
+no chance to roll back, retry, or finish the transfer. It refuses to run unless
+`PAYOUT_PROVIDER=stub`.
+
+Three numbers that have to hold together, at 6 lines and at 20, with up to 16
+concurrent payout attempts:
+
+```
+  paid twice              $0.00
+  lost to the crash       $0.00
+  left in limbo           0 payouts
+
+  payout_items rows       21
+  distinct order items    21
+```
+
+*Not paying twice is the easy half.* The claim is committed **before** the
+provider is called, so a crash in between leaves money reserved and unsent —
+owed rather than lost. That only works because something comes back for it:
+`sendPendingPayouts()` finishes the stranded claim, and running it a second time
+considers nothing, because nothing is left `PENDING`. Reverse the ordering and
+you trade limbo for double-payment; drop the sweeper and you trade
+double-payment for limbo. Both halves, or neither.
+
+Of 16 simultaneous attempts on one payable line, **1 sent and 15 were refused**,
+and the line appears in exactly one payout. `payout_items.orderItemId` is unique,
+so the transaction that inserts first wins and every other one rolls back its
+whole payout.
+
+**Duplicates are counted without trusting the constraint that prevents them.**
+The figure is `payout_items rows - distinct(orderItemId)`, so dropping the unique
+index tomorrow would make this script report the duplicates it allows rather
+than report zero because the index made the query impossible to fail. Same
+reasoning as `consumer-failure-demo.ts`.
+
+What it does **not** prove: nothing here reached Stripe. Every transfer above
+was issued by the stub, so this demonstrates the claim ordering and the
+constraint — not that Connect behaves as assumed.
+
 ## Documentation
 
 The README stays deliberately short. Everything else lives in [`docs/`](docs/):
@@ -298,7 +352,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 28 ADRs on why things are built the way they are, all accepted |
+| [Decision records](docs/adr/README.md) | 30 ADRs on why things are built the way they are — 28 accepted, and the two payout ones still Proposed because they turn on business questions nobody has answered |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
 
@@ -313,14 +367,15 @@ is charged, and why admin is granted by CLI with no promotion endpoint.
 Kintsugi/
 ├── backend/            Express API
 │   ├── prisma/         Schema, migrations, seed
-│   ├── scripts/        admin grant/revoke, rate-limit load demo
+│   ├── scripts/        admin grant/revoke, and the safety/throughput demos
 │   ├── src/
-│   │   ├── lib/        Auth, orders, payments, refunds, moderation,
-│   │   │               cache, rate limiting, mail, storage, images, KYC
+│   │   ├── lib/        49 modules — auth, orders, payments, refunds, payouts,
+│   │   │               notifications, moderation, cache, rate limiting,
+│   │   │               mail, SMS, push, storage, images, KYC
 │   │   ├── middleware/ requireAuth, requireSeller, requireAdmin
-│   │   └── routes/     15 routers — auth, catalog, seller, orders,
-│   │                   reservations, admin, webhooks, and the rest
-│   └── tests/          31 suites: api/, browser/, and shared fixtures
+│   │   └── routes/     16 routers — auth, catalog, seller, orders,
+│   │                   reservations, payouts, admin, webhooks, and the rest
+│   └── tests/          33 suites: api/, browser/, and shared fixtures
 ├── frontend/           Next.js storefront
 │   └── src/
 │       ├── app/        Routes, including BFF handlers under app/api/*
@@ -358,6 +413,24 @@ never learns the backend's address. See
   one parcel ([ADR 0014](docs/adr/0014-one-order-fulfilment-per-line.md))
 - Identity verification through Stripe Identity, gating payouts rather than
   listing ([ADR 0007](docs/adr/0007-verification-gates-payouts.md))
+
+**Paying sellers out**
+
+- Buyers pay the platform and the platform transfers onward — separate charges
+  and transfers, not destination charges, because the platform takes no cut and
+  a destination charge assumes one
+  ([ADR 0029](docs/adr/0029-payouts-separate-transfers-not-destination-charges.md))
+- A payout **claims its lines before a cent moves**, and `payout_items.orderItemId`
+  is unique, so two concurrent runs collide on the constraint rather than paying
+  the same item twice — the same shape as claim-then-charge
+- Five conditions decide what is owed, and a seven-day hold after delivery keeps
+  the platform from paying out money a dispute is about to claw back
+  ([ADR 0030](docs/adr/0030-payout-eligibility-and-hold.md))
+- A refund that lands after a payout reverses the transfer, and a reversal the
+  provider refuses becomes a debt netted off the seller's next payout rather
+  than an invoice
+- `/seller/payouts` shows the lines behind every figure; `/admin/payouts` is the
+  reconciliation view and is deliberately **read-only**
 
 **Money back**
 
@@ -420,8 +493,18 @@ never learns the backend's address. See
 
 ## Not built yet
 
-- **Payouts to sellers.** The largest remaining gap. Money reaches the platform
-  and can be refunded from it; paying sellers out needs Stripe Connect.
+- **Stripe Connect against the real thing.** The payout path is complete and
+  exercised end to end, but only against `PAYOUT_PROVIDER=stub`. No connected
+  account has ever been created and no transfer has ever been issued, so the
+  numbers below prove the *claim ordering* rather than the provider integration.
+  Two questions in [plan 0002](docs/plans/0002-seller-payouts.md) are business
+  decisions still open: who absorbs Connect's per-transfer and per-account fees
+  on a platform taking no cut, and whether seven days is the right hold.
+
+- **Anything that runs on a timer.** Payout retries, outbox retention and the
+  stale-delivery sweep are written, tested and exported — and every one of them
+  has to be invoked by something else. Compose has no scheduler, and a
+  `setInterval` in a web process is a worse cron than cron.
 
 - **Kubernetes.** Compose is the deployment story today, and nothing promotes
   the standby or replaces a dead instance — that is an orchestrator's job.

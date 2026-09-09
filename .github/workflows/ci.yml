@@ -95,9 +95,15 @@ jobs:
       # one — resetting to page 1 when a filter changes — was NOT accepted; that
       # page resets in the change handler instead, which is one render rather
       # than two and is why the ceiling moved by one rather than two.
+      #
+      # 37 -> 39 (payouts). Two pages, one instance each: the seller's payout
+      # page and the admin payout log, both the same load-on-mount effect. Both
+      # reset paging and filters in their change handlers, so neither
+      # contributed a second instance. Two new pages, two warnings — the
+      # ceiling tracks the pattern, and the pattern did not get worse.
       - name: Lint frontend
         working-directory: frontend
-        run: npx eslint src --max-warnings 37
+        run: npx eslint src --max-warnings 39
 
       # Catches what tsc cannot: a bad import in a route handler, a client
       # component using a server-only API, a page that fails to prerender.
@@ -164,6 +170,10 @@ jobs:
       BACKEND_URL: http://localhost:4000
       PAYMENT_PROVIDER: stub
       KYC_PROVIDER: stub
+      # Stub defaults on its own, but stated explicitly: this is the variable
+      # that decides whether the suite can move money, and a reader should not
+      # have to check a default to know CI cannot.
+      PAYOUT_PROVIDER: stub
       # A shared HMAC key, not a credential.
       #
       # /webhooks/stripe refuses to trust anything without this — rightly, since

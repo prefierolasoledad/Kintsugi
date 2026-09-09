@@ -52,6 +52,7 @@ export default function AdminShell({
     { href: "/admin/catalogue", label: "Catalogue", icon: <TagIcon /> },
     { href: "/admin/reports", label: "Reports", icon: <FlagIcon />, badge: openReports },
     { href: "/admin/deliveries", label: "Delivery log", icon: <SendIcon /> },
+    { href: "/admin/payouts", label: "Payout log", icon: <BanknoteIcon /> },
     { href: "/admin/audit", label: "Audit log", icon: <ScrollIcon /> },
   ];
 
@@ -267,6 +268,15 @@ function SendIcon() {
   return (
     <svg {...s}>
       <path d="M17 3.5 8.5 12M17 3.5l-5.5 13-3-4.5-4.5-3z" {...stroke} />
+    </svg>
+  );
+}
+
+function BanknoteIcon() {
+  return (
+    <svg {...s}>
+      <rect x="2.5" y="5.5" width="15" height="9" rx="1.5" {...stroke} />
+      <circle cx="10" cy="10" r="2.25" {...stroke} />
     </svg>
   );
 }

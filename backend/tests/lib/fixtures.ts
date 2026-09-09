@@ -262,15 +262,28 @@ export class Scope {
    * Restoring a flat `quantity: 1` is wrong and silently corrupted a seeded
    * set-of-three once. The snapshot is taken before anything touches it.
    */
-  async claimListing(opts: { minQuantity?: number } = {}) {
+  async claimListing(opts: { minQuantity?: number; exactQuantity?: number } = {}) {
     const min = opts.minQuantity ?? 1;
+    /**
+     * `exactQuantity` exists because "at least one" is not the same requirement
+     * as "exactly one", and an assertion about a listing selling OUT needs the
+     * second. The seeded catalogue used to be entirely quantity-1, so
+     * `minQuantity: 1` happened to give a single-stock listing every time;
+     * `seed:scale` makes 15% of them quantity 2-4, at which point that
+     * assumption fails roughly one run in six.
+     */
     const page = await catalog<{ listings: any[] }>("/catalog/listings?limit=40");
 
-    const found = page.listings.find(
-      (l) => !this.listings.has(l.id) && l.quantity >= min
-    );
+    const wanted = (l: any) =>
+      opts.exactQuantity !== undefined ? l.quantity === opts.exactQuantity : l.quantity >= min;
+
+    const found = page.listings.find((l) => !this.listings.has(l.id) && wanted(l));
     if (!found) {
-      throw new Error(`no unclaimed active listing with quantity >= ${min}`);
+      throw new Error(
+        opts.exactQuantity !== undefined
+          ? `no unclaimed active listing with quantity === ${opts.exactQuantity}`
+          : `no unclaimed active listing with quantity >= ${min}`
+      );
     }
 
     const row = await prisma.listing.findUniqueOrThrow({

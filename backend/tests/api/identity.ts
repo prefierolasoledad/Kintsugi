@@ -158,10 +158,24 @@ void main(
     t.check(after.json.verification.rejectionReason === null,
       "the old rejection reason was cleared", after.json.verification.rejectionReason);
 
+    /**
+     * What this suite owns is the GATE, not the payout arithmetic — that has
+     * its own 52 assertions in tests/api/payouts.ts. So this asserts the same
+     * endpoint that refused a moment ago now answers, and that it answers with
+     * the real payout shape rather than the placeholder's fixed zero.
+     */
     const payouts = await seller.get("/api/seller/payouts");
-    t.check(payouts.status === 200 && payouts.json.payouts.enabled === true,
-      "the payouts endpoint now allows access", payouts.status);
-    t.check(payouts.json.payouts.balanceCents === 0, "balance is honestly zero");
+    t.check(payouts.status === 200, "the payouts endpoint now allows access",
+      `${payouts.status} ${payouts.json?.code ?? ""}`);
+    t.check(payouts.json.summary?.gates?.payoutsEnabled === true,
+      "and reports the identity gate as open", payouts.json.summary?.gates);
+    // Nothing sold, so zero — but a computed zero, not a hardcoded one.
+    t.check(payouts.json.summary?.payableCents === 0, "nothing payable yet",
+      payouts.json.summary?.payableCents);
+    // The other gate is still shut: verification does not connect an account.
+    t.check(payouts.json.summary?.gates?.payoutsReady === false,
+      "the payout-account gate stays shut until an account is connected",
+      payouts.json.summary?.gates?.payoutsReady);
 
     /* ---------------------------------------------------------- */
     t.section("idempotency and unknown sessions");

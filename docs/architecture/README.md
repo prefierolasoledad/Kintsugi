@@ -2,9 +2,11 @@
 
 Kintsugi is a four-container system in its default setup: a Next.js server, an
 Express API, PostgreSQL, and Redis. Object storage joins them for photos, and
-three more are opt-in behind Compose profiles — a streaming Postgres standby
-(`ha`), and a Kafka broker with its relay and channel workers (`messaging`).
-The browser talks only to Next.js.
+four more services are opt-in behind two Compose profiles — a streaming
+Postgres standby (`ha`), and a Kafka broker with its relay and its channel
+workers (`messaging`). A third profile, `tools`, holds one-shot jobs rather than
+services: seeding, base backups and the restore drill. The browser talks only to
+Next.js.
 
 ```mermaid
 flowchart LR
@@ -52,7 +54,7 @@ audiences:
 | Interface | [../api.md](../api.md) | What endpoints exist? |
 | Rationale | [../adr/](../adr/README.md) | Why is it like this and not otherwise? |
 
-## The five ideas that explain most of the code
+## The seven ideas that explain most of the code
 
 1. **The Next.js server is the only thing the browser trusts.** Every API call
    goes through a BFF route handler, so the Express address is never exposed
@@ -81,3 +83,16 @@ audiences:
    claim, refund headroom, TOTP replay. Redis holds only counters that expire
    and copies that can be rebuilt, so losing it costs latency and never data.
    → [ADR 0018](../adr/0018-redis-for-shared-ephemeral-state.md)
+
+7. **Claim it in the database before you act on the world.** Every irreversible
+   outside call — charging a card, issuing a refund, sending a notification,
+   transferring a payout — is preceded by a write that only one caller can win.
+   The mechanism varies with the shape of the thing: `SELECT … FOR UPDATE` for
+   stock, a conditional `UPDATE` for the payment claim and refund headroom, a
+   unique-constraint insert for the delivery ledger and payout items. The point
+   is always the same: two concurrent attempts must collide in Postgres, where
+   it is free to lose, rather than at a provider, where it costs money.
+   → [ADR 0013](../adr/0013-payment-provider-seam.md),
+   [ADR 0016](../adr/0016-refunds-claim-then-refund.md),
+   [ADR 0026](../adr/0026-delivery-idempotency.md),
+   [ADR 0030](../adr/0030-payout-eligibility-and-hold.md)

@@ -345,8 +345,10 @@ export async function markShipped(input: {
  * The buyer confirms arrival.
  *
  * Deliberately the BUYER's action, not the seller's. A seller marking their own
- * parcel delivered is not evidence of anything, and once payouts exist that
- * confirmation is what money would hang on.
+ * parcel delivered is not evidence of anything — and this is now load-bearing
+ * rather than hypothetical: `deliveredAt` starts the payout hold, so the moment
+ * this is called is the moment a seller's money begins counting down.
+ * See ADR 0030.
  */
 export async function markDelivered(buyerId: string, orderItemId: string) {
   const line = await prisma.orderItem.findFirst({

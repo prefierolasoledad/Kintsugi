@@ -362,43 +362,10 @@ sellerVerificationRouter.get("/verification/:sessionId/status", async (req, res)
   }
 });
 
-/**
- * The payout gate with teeth. There is no money movement to show yet, but the
- * permission boundary is enforced here rather than only in the UI.
+/*
+ * `GET /seller/payouts` used to live here: a 403 gate over an honest zero
+ * balance, from when there was no payout pipeline to gate. The real route is
+ * in sellerPayouts.ts now and carries the same `PAYOUTS_LOCKED` refusal, so
+ * this one is gone rather than shadowed. Both were mounted at /seller, and two
+ * handlers for one path is a bug waiting for whoever reorders the mounts.
  */
-sellerVerificationRouter.get("/payouts", async (req, res) => {
-  try {
-    const profile = await prisma.sellerProfile.findUnique({
-      where: { id: req.sellerId },
-      select: { payoutsEnabled: true, kycStatus: true },
-    });
-
-    if (!profile) {
-      return res.status(404).json({ error: "Seller profile not found." });
-    }
-
-    if (!profile.payoutsEnabled) {
-      return res.status(403).json({
-        error: "Verify your identity before you can receive payouts.",
-        code: "PAYOUTS_LOCKED",
-        kycStatus: profile.kycStatus,
-      });
-    }
-
-    res.json({
-      payouts: {
-        enabled: true,
-        // Honest empty state. Checkout exists now, but it runs against a payment
-        // sandbox and there is no payout pipeline, so the balance is genuinely
-        // zero rather than unimplemented-and-hidden.
-        balanceCents: 0,
-        currency: "USD",
-        history: [],
-        note: "Payments are sandbox only and payouts aren't built, so there's nothing to pay out.",
-      },
-    });
-  } catch (err) {
-    console.error("GET /seller/payouts failed", err);
-    res.status(500).json({ error: "Could not load payouts." });
-  }
-});
