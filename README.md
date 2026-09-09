@@ -29,21 +29,22 @@ a Next.js storefront, an Express API, and PostgreSQL.
 ---
 
 <!--
-  Four screenshots, and they are the suite's own output rather than a mockup —
-  every one of these was taken by Playwright while the browser tests drove the
-  real application. `backend/tests/screenshots/` is gitignored because 46 files
-  that regenerate on every run do not belong in git history; these are a
-  deliberate, resized copy.
+  ONE image here, deliberately, and the rest under "What it looks like" further
+  down beside the claims they support.
+  
+  Screenshots are the only claim in this file that nothing verifies. The
+  assertion counts come from a run, the failover numbers from a script, the ADR
+  statuses get corrected when they drift — an image just quietly starts lying
+  when the UI moves on. So: one, to answer "is this a real product", and the
+  rest kept near the arguments they illustrate rather than in a gallery at the
+  top.
+
+  All of them are the suite's own Playwright output, not mockups.
+  `backend/tests/screenshots/` is gitignored because 46 files that regenerate
+  every run do not belong in git history; these are a deliberate resized copy.
 -->
 
-![The storefront: categories, price drops, and condition shown rather than hidden](docs/screenshots/storefront.webp)
-
-| | |
-| --- | --- |
-| ![A seller's sales, with per-line fulfilment](docs/screenshots/seller-sales.png) | ![A buyer's receipt](docs/screenshots/order-receipt.png) |
-| **Selling.** Fulfilment is per line, because a basket can span several sellers and two sellers cannot share one parcel. | **Buying.** The receipt is a snapshot: editing your address book later cannot rewrite where a past parcel went. |
-| ![The admin dashboard](docs/screenshots/admin-dashboard.png) | ![The moderation audit log](docs/screenshots/admin-audit.png) |
-| **Operating.** Behind a CLI-granted role and a TOTP step-up ([ADR 0015](docs/adr/0015-admin-by-cli-grant-and-step-up.md)). | **Accountable.** Every moderator action writes an append-only audit row, because a removal with no recorded reason is unanswerable. |
+![The Kintsugi storefront: categories, price drops, and condition disclosed rather than hidden](docs/screenshots/storefront.webp)
 
 ---
 
@@ -132,6 +133,38 @@ Sign up, and with the default `MAIL_TRANSPORT=console` the verification link is
 printed to the **backend terminal** — paste it into your browser to activate the
 account. Set `MAIL_TRANSPORT=ethereal` to have it delivered to a throwaway inbox
 instead, or `smtp` with credentials to send for real.
+
+## What it looks like
+
+Four screens, each chosen because it shows a decision rather than a feature.
+Every one is the test suite's own Playwright output, not a mockup.
+
+| | |
+| --- | --- |
+| ![A seller's sales list, each line with its own fulfilment state](docs/screenshots/seller-sales.png) | ![A buyer's order receipt](docs/screenshots/order-receipt.png) |
+
+**Left — fulfilment is per line, not per order.** A basket can span four sellers
+and two sellers cannot share one parcel, so "your order has shipped" is not a
+sentence this system can honestly say ([ADR 0014](docs/adr/0014-one-order-fulfilment-per-line.md)).
+**Right — the receipt is a snapshot.** The address was copied onto the order at
+checkout, so editing your address book afterwards cannot rewrite where a past
+parcel went.
+
+![The admin dashboard: revenue, orders needing attention, and the moderation queue](docs/screenshots/admin-dashboard.png)
+
+**The operational half, which is usually the missing half.** Behind a
+CLI-granted role and a TOTP step-up — there is deliberately no "make me an
+admin" endpoint, because an HTTP route that grants privilege is a route worth
+attacking ([ADR 0015](docs/adr/0015-admin-by-cli-grant-and-step-up.md)). Every
+action a moderator takes writes an append-only audit row, since a removal with
+no recorded reason is unanswerable three months later.
+
+<details>
+<summary>The audit log itself</summary>
+
+![The moderation audit log](docs/screenshots/admin-audit.png)
+
+</details>
 
 ## Testing
 
