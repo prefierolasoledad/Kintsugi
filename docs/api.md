@@ -921,8 +921,11 @@ released at the same moment, not before.
   "summary": { "toSend": 1, "shipped": 0, "delivered": 0, "grossCents": 4200 } }
 ```
 
-`grossCents` is named gross on purpose: there is no payout pipeline, so calling
-it earnings would imply money is waiting somewhere.
+`grossCents` is named gross on purpose, and it stayed that way once payouts
+were built. It is the total of what sold, before the hold and before any
+refund — so it is not what the seller is owed. What they are owed, line by
+line, is [`GET /seller/payouts`](#get-sellerpayouts), and calling this one
+earnings would put two different numbers under one word.
 
 ### `POST /seller/sales/:id/ship`
 ```json
@@ -942,6 +945,14 @@ whole order, since a basket can span sellers and one seller failing to post says
 nothing about the others. The refund is attributed to the seller rather than to
 a moderator, carries their stated reason, and notifies the buyer that the money
 is on its way back. See [ADR 0016](adr/0016-refunds-claim-then-refund.md).
+
+`200` → `{ "ok": true, "refunded": true, "refundCents": 4200,
+"refundStatus": "SUCCEEDED", "refundError": null, "note": "…" }`
+
+**The outcome is reported, not assumed.** A provider can still refuse, so the
+seller is told which happened rather than reassured either way — `refunded:
+false` with a `refundError` means the buyer was told and the money was not
+sent, and the refund row is recorded for somebody to settle.
 
 ---
 

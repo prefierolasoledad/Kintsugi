@@ -470,7 +470,7 @@ Kintsugi/
 │   ├── prisma/         Schema, migrations, seed
 │   ├── scripts/        admin grant/revoke, and the safety/throughput demos
 │   ├── src/
-│   │   ├── lib/        49 modules — auth, orders, payments, refunds, payouts,
+│   │   ├── lib/        50 modules — auth, orders, payments, refunds, payouts,
 │   │   │               notifications, moderation, cache, rate limiting,
 │   │   │               mail, SMS, push, storage, images, KYC
 │   │   ├── middleware/ requireAuth, requireSeller, requireAdmin

@@ -49,6 +49,15 @@ re-checks.
 - `payoutsEnabled` exists with no consumer today. Deliberate: the permission
   boundary is real and tested even though money movement is not built.
 
+  *Since 2026-09-08 it has one.* [ADR 0029](0029-payouts-separate-transfers-not-destination-charges.md)
+  built the payout path, and `lib/payouts.ts` reads this column as one of the
+  two gates money passes — the other being Stripe's own
+  ([ADR 0030](0030-payout-eligibility-and-hold.md)). The boundary this record
+  argued for turned out to be the right shape: nothing had to move, only be
+  consumed. The `403 PAYOUTS_LOCKED` promised here is still the answer on every
+  payout route, and `tests/api/payout-routes.ts` fires all six at an unverified
+  seller to keep it that way.
+
 ## Alternatives considered
 
 **Verify before listing.** Simplest to reason about, worst for onboarding, and

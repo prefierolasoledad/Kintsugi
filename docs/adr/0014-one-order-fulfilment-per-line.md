@@ -94,6 +94,14 @@ status, which is the truth rather than a convenient simplification.
   refunding it**, because refunds are not built. The API returns
   `refundOwed: true` and the UI says the buyer must settle it with the seller
   directly. Recording it silently would leave money quietly kept for nothing.
+
+  *Superseded 2026-09-05.* [ADR 0016](0016-refunds-claim-then-refund.md) built
+  refunds, and marking a line unfulfillable now issues one in the same
+  operation. `refundOwed` is gone; the route returns `refunded`,
+  `refundCents`, `refundStatus` and `refundError`, because a provider can still
+  refuse and the seller should be told which happened rather than reassured
+  either way. The instinct recorded above — never keep money for something
+  nobody will send — is what the automatic refund implements.
 - Every existing buyer has no address, so checkout refuses until they add one.
   The UI treats `NO_ADDRESS` as a missing step and routes to the form with a
   `?next` parameter, rather than showing an error and leaving them to work out

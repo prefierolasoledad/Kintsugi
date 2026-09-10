@@ -96,7 +96,24 @@ export function markShipped(
 }
 
 export function markCannotSend(saleId: string, reason: string) {
-  return request<{ ok: true; refundOwed: boolean; note: string }>(
+  /**
+   * The shape here drifted from the API and nothing caught it: this declared
+   * `refundOwed: boolean` long after the route stopped returning it. Only
+   * `note` was ever read, so it typechecked and rendered correctly while
+   * describing a response that no longer existed — and anybody reaching for
+   * the refund outcome would have found it missing from the type rather than
+   * from the wire.
+   */
+  return request<{
+    ok: true;
+    /** Whether the refund actually went through, reported rather than assumed. */
+    refunded: boolean;
+    refundCents: number;
+    refundStatus: string | null;
+    /** The provider's own words when it refused. */
+    refundError: string | null;
+    note: string;
+  }>(
     `/sales/${saleId}/cannot-send`,
     { method: "POST", body: JSON.stringify({ reason }) }
   );
