@@ -22,7 +22,7 @@
     "test:api": "tsx tests/run.ts api",
     "test:browser": "tsx tests/run.ts browser",
     "test:payments": "tsx tests/payment-safety.ts",
-    "lint": "eslint . --max-warnings 195"
+    "lint": "eslint . --max-warnings 218"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",

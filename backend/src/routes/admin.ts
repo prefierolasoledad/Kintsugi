@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { checkRateLimit } from "../lib/rateLimit";
 import { requireAuth } from "../middleware/requireAuth";
 import { requireAdmin } from "../middleware/requireAdmin";
+import { adminPlacementRouter } from "./adminPlacement";
 import {
   ADMIN_COOKIE_NAME,
   ADMIN_SESSION_SECONDS,
@@ -271,6 +272,13 @@ adminRouter.post("/session/end", requireAuth, async (_req, res) => {
  * ================================================================== */
 
 adminRouter.use(requireAdmin);
+
+/**
+ * Merchandising and seller conversations, in their own file but mounted HERE —
+ * below the gate — so they inherit the admin session check. A separate
+ * `app.use("/admin", ...)` in index.ts would look the same and be unguarded.
+ */
+adminRouter.use(adminPlacementRouter);
 
 adminRouter.get("/overview", async (_req, res) => {
   try {

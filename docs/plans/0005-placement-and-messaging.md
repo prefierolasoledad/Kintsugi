@@ -1,6 +1,6 @@
 # Plan 0005 — Letting the platform choose, and letting a seller ask
 
-- **Status:** Phases 0–2 landed 2026-09-11. Phases 3–7 not started.
+- **Status:** Phases 0–4 landed 2026-09-11. Phases 5–7 not started.
 - **Written:** 2026-09-11
 - **Produces:** ADR 0033 (messaging), ADR 0034 (paid placement)
 
@@ -167,8 +167,8 @@ unique-violation.
 | 0 | Decide. ADR 0033 and ADR 0034. | **Recorded 2026-09-11** |
 | 1 | Schema + migration, including the hand-written partial unique index. | **Landed 2026-09-11** — see the note below |
 | 2 | `lib/messaging.ts` — open a thread, post a message, mark read, close. Two new notification event types wired through the outbox. | **Landed 2026-09-11** — 38 assertions in `tests/api/messaging.ts` |
-| 3 | `lib/placement.ts` — request, counter, agree, activate, end, decline, withdraw. Every transition a conditional `UPDATE`. | Two concurrent activations produce one LIVE row, proven by a test that runs them in parallel |
-| 4 | Seller routes: request placement, list threads, read, reply. Admin routes: the placement queue, counter, decide, activate. | Both sides drivable over HTTP with no database access |
+| 3 | `lib/placement.ts` — request, counter, agree, activate, end, decline, withdraw. Every transition a conditional `UPDATE`. | **Landed 2026-09-11** — 43 assertions, and the race proven to fail without the index |
+| 4 | Seller routes: request placement, list threads, read, reply. Admin routes: the placement queue, counter, decide, activate. | **Landed 2026-09-11** — 45 assertions in `tests/api/placement-routes.ts` |
 | 5 | Homepage reads live placements. **Promoted label on the hero and the shelf card.** Sold listings drop out. | A LIVE placement appears with its label; marking it SOLD removes it |
 | 6 | Seller and admin UI: a thread view, a placement request form, an admin merchandising screen. | A negotiation can be completed end to end in a browser |
 | 7 | Sweeper: `AGREED` → `LIVE` when `startsAt` arrives, `LIVE` → `ENDED` when `endsAt` passes. Sixth in-process sweeper. | A placement goes live and ends without anyone pressing anything |
@@ -247,6 +247,94 @@ other not. The placement work needs it a third time, so it is now
 import it. The drift mattered: the partial unique index on live placements is a
 constraint Prisma does not know about, so it raises `23505`, which the narrower
 copy would have rethrown as an unexpected error.
+
+### Phase 3, and what it cost
+
+`lib/placement.ts`, 560 lines, 43 assertions. The sweeper from phase 7 is
+written here too, since it is two queries and the suite could prove it now.
+
+**The race assertion was checked by breaking it.** A test that cannot fail is
+decoration, so the index was dropped and the suite re-run:
+
+```
+[4. two agreements, one slot, activated in parallel]
+  PASS  two agreements both reached AGREED for HERO position 0
+  FAIL  exactly one activation won — 2 won
+  FAIL  and the other was told the slot was taken — 0 reported slot-taken
+  FAIL  one LIVE row in the database — found 2
+```
+
+Two live heroes, which is the exact bug ADR 0034 exists to prevent. Index
+recreated, suite green again. **It also had to be `Promise.all`** — two
+sequential `activate()` calls pass against an implementation with no constraint
+at all, because the second one sees the first row already `LIVE`.
+
+**The dedupe from phase 2 paid for itself here.** The partial index is a
+constraint Prisma does not know about, so it raises Postgres's `23505` rather
+than Prisma's `P2002`. The narrower copy of `isUniqueViolation` that used to
+live in `returns.ts` would have rethrown it as an unexpected error, and the
+loser of a slot race would have been a 500 instead of a queued placement.
+
+**One decision the ADR had not made:** what the loser of a race gets. It returns
+`slot-taken` and stays `AGREED` rather than failing, which is what makes queuing
+work without anybody re-requesting — and is why `sweepPlacements()` activates
+one row at a time rather than in a single `updateMany`, since a bulk update of
+everything due would take the whole batch or none of it.
+
+**One notification per action.** A counter-offer is both a message and a
+commercial decision, and announcing it twice is how a channel gets muted. So
+`writeMessage` gained an optional notification type and placement transitions
+raise `PLACEMENT_DECIDED` in place of `MESSAGE_RECEIVED`, with the terms in the
+message body — the thread reads as a negotiation rather than a status log.
+
+### Phase 4, and what it cost
+
+Two routers — `sellerMessaging.ts` (9 endpoints) and `adminPlacement.ts` (12) —
+and a 45-assertion suite that drives the whole negotiation over HTTP: seller
+asks, moderator counters, seller accepts, moderator activates, moderator ends.
+
+**The admin routes are mounted INSIDE `admin.ts`, below
+`adminRouter.use(requireAdmin)`.** Mounting them separately at `/admin` from
+`index.ts` would have looked identical and been completely unguarded, because a
+separate router does not inherit another router's middleware. The file says so
+at the top, since it is the sort of thing that gets "tidied up" later.
+
+**Both `use()` calls in the seller router name their path**, and the suite opens
+by proving the neighbours still answer:
+
+```
+[1. the new router did not lock its neighbours out]
+  PASS  GET /seller/sales still answers 200
+  PASS  GET /seller/verification still answers 200 — the door an unverified seller needs
+  PASS  GET /seller/listings still answers 200
+```
+
+That is not a theoretical risk. An unscoped `use()` in a router mounted at
+`/seller` broke every sibling route with a 500 once already, and the feature's
+own tests did not notice — `identity.ts` caught it. Both `identity` (44) and
+`payout-routes` (62) were re-run here and are green.
+
+**The lint ceiling moved, by the procedure the config documents.** 195 → 218,
+with a note in `eslint.config.mjs` beside the existing one, because
+`no-misused-promises` is a warning by deliberate choice and the ceiling exists
+to make growth visible rather than to prevent it. All 23 are async Express
+handlers, the same shape as the 133 before them. The check that mattered: zero
+new warnings in `lib/messaging.ts`, `lib/placement.ts` or any of the three
+suites. Route handlers growing the count is expected; anything else would mean
+the pattern had spread.
+
+**One thing the routes say out loud that the UI could have kept to itself.**
+`GET /seller/placements/slots` returns a `disclosure` field —
+*"Paid placements are labelled “Promoted” wherever they appear."* A seller
+agreeing to pay is entitled to know that before they agree, and a client that
+forgets to render it should not be the only thing standing between them and a
+surprise.
+
+**Authorisation, stated as the suite asserts it:** a signed-out request is 401;
+a buyer reaching a seller route is refused; another seller asking about your
+listing, thread or placement gets **404, never 403**, so an id cannot be used to
+ask whether a rival's thing exists; and declining a request without a reason is
+a 400, for the same reason refusing a return requires one.
 
 ## 5. What this deliberately does not do
 

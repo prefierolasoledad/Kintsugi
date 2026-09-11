@@ -136,6 +136,18 @@ export default defineConfig([
        *   read — each written the same way as the hundred and twenty-four
        *   before them. Nine handlers, nine warnings; the pattern did not get
        *   worse and no new rule was tripped.
+       *
+       *   195 -> 218 (placement and messaging). Twenty-three: eleven in
+       *   `sellerMessaging.ts` (nine handlers plus the two path-scoped `use()`
+       *   calls, whose middleware is async) and twelve in `adminPlacement.ts`.
+       *   Every one is the same shape as the others, and NOTHING was added in
+       *   `lib/messaging.ts`, `lib/placement.ts` or the three new suites — the
+       *   libraries and tests are clean, which is the check worth making: this
+       *   count growing with route handlers is expected, growing anywhere else
+       *   would mean the pattern had spread.
+       *
+       *   The wrapper is now overdue at ~156 call sites and remains the right
+       *   fix, still not to be done in the same breath as a feature.
        */
       "@typescript-eslint/no-misused-promises": "warn",
 

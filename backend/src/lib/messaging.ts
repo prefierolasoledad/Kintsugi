@@ -52,6 +52,13 @@ async function writeMessage(
     authorUserId: string;
     body: string;
     shopName: string;
+    /**
+     * Defaults to MESSAGE_RECEIVED. Overridden by the placement library so one
+     * action raises ONE notification: a counter-offer is a message AND a
+     * commercial decision, and telling somebody twice about one event is how a
+     * channel gets muted. See ADR 0034.
+     */
+    notificationType?: NotificationType;
   }
 ): Promise<{ messageId: string; recipientIds: string[] }> {
   const fromSeller = input.author === MessageAuthor.SELLER;
@@ -99,15 +106,19 @@ async function writeMessage(
       ).map((u) => u.id)
     : [input.sellerUserId];
 
+  const type = input.notificationType ?? NotificationType.MESSAGE_RECEIVED;
+
   const title = fromSeller
     ? `${input.shopName} sent a message`
-    : `Kintsugi replied about "${input.subject}"`;
+    : type === NotificationType.PLACEMENT_DECIDED
+      ? `Your homepage placement request was answered`
+      : `Kintsugi replied about "${input.subject}"`;
 
   for (const userId of recipients) {
     const notification = await tx.notification.create({
       data: {
         userId,
-        type: NotificationType.MESSAGE_RECEIVED,
+        type,
         title,
         /**
          * A snapshot, not a join. The notification has to stay readable when
@@ -121,7 +132,7 @@ async function writeMessage(
     });
 
     await enqueue(tx, {
-      type: NotificationType.MESSAGE_RECEIVED,
+      type,
       userId,
       /** The thread, so a support query can trace every message about one conversation. */
       aggregateType: "message_thread",
@@ -199,6 +210,42 @@ export async function openThread(input: {
   const result = await prisma.$transaction((tx) => openThreadTx(tx, input));
   await invalidate(...result.recipientIds.map(unreadKey));
   return { opened: true, threadId: result.threadId, messageId: result.messageId };
+}
+
+/**
+ * A reply written inside somebody else's transaction.
+ *
+ * Exists for the placement library: a counter-offer changes the request's terms
+ * AND says so in the thread, and those two must not be separable — a status
+ * that moved with no message is a seller told their terms changed without being
+ * told what to. The caller is responsible for badge invalidation after commit,
+ * which is why the recipients come back.
+ */
+export async function postMessageTx(
+  tx: TxClient,
+  input: {
+    threadId: string;
+    author: MessageAuthor;
+    authorUserId: string;
+    body: string;
+    notificationType?: NotificationType;
+  }
+): Promise<{ messageId: string; recipientIds: string[] }> {
+  const thread = await tx.messageThread.findUniqueOrThrow({
+    where: { id: input.threadId },
+    select: { subject: true, seller: { select: { userId: true, shopName: true } } },
+  });
+
+  return writeMessage(tx, {
+    threadId: input.threadId,
+    subject: thread.subject,
+    sellerUserId: thread.seller.userId,
+    author: input.author,
+    authorUserId: input.authorUserId,
+    body: input.body.trim(),
+    shopName: thread.seller.shopName ?? "A seller",
+    notificationType: input.notificationType,
+  });
 }
 
 export type PostOutcome =

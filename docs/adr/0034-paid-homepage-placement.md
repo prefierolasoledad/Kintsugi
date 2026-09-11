@@ -1,6 +1,8 @@
 # 34. Paid homepage placement, recorded as an agreement and labelled as an ad
 
-- **Status:** Accepted — not yet implemented. See
+- **Status:** Accepted — `lib/placement.ts` implemented 2026-09-11, covered by
+  `tests/api/placement.ts` (43 assertions). Routes, the homepage read and the
+  Promoted label are phases 4–6 of
   [plan 0005](../plans/0005-placement-and-messaging.md).
 - **Recorded:** 2026-09-11
 
@@ -124,6 +126,19 @@ until its period ends.
 
 No pro-rata anything, which is only tenable because no money was taken. If the
 charge ever gets built, this is the case that will need a policy first.
+
+### The loser of a slot race is told, not failed
+
+`activate()` returns `{ activated: false, reason: "slot-taken" }` and leaves the
+row `AGREED`, rather than raising. Decided while implementing, and it is what
+makes the queue behaviour fall out for free: the blocked agreement goes live on
+the next sweep after the one in front of it ends, with nobody re-requesting
+anything.
+
+Which in turn is why `sweepPlacements()` activates one row at a time instead of
+in one `updateMany`. A bulk update of everything due would take the whole batch
+or none of it, and "none of it" is what two agreements queued for the same slot
+would produce — forever.
 
 ## Consequences
 
