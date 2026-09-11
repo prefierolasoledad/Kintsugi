@@ -1,6 +1,7 @@
 # 33. Seller–admin messaging, as threads with a role on one side
 
-- **Status:** Accepted — not yet implemented. See
+- **Status:** Accepted — `lib/messaging.ts` implemented 2026-09-11, covered by
+  `tests/api/messaging.ts` (38 assertions). Routes and UI are phases 4 and 6 of
   [plan 0005](../plans/0005-placement-and-messaging.md).
 - **Recorded:** 2026-09-11
 
@@ -64,6 +65,27 @@ The cost is honest and accepted: **two moderators reading the same thread cannot
 be distinguished**, and the first to open it clears the badge for all of them.
 That is the same trade the admin panel already makes everywhere else.
 
+### A seller writing reaches EVERY live moderator
+
+Decided while implementing, because "the admin side is a role" does not by
+itself say who gets the notification. A notification needs a `userId`, and there
+is no admin user id on the thread to use.
+
+So a seller's message raises one notification and one outbox event per
+non-suspended `ADMIN`. **Rejected: notifying one arbitrary moderator**, which
+works perfectly until the person it picked is on holiday, and whose failure mode
+is a thread nobody knows about. **Rejected: a nullable recipient**, which is the
+same thing as having no notification.
+
+Suspended admins are excluded, for the reason `ACCOUNT_SUSPENDED` has no push
+channel: a notification whose link leads to a login screen that refuses you is
+worse than silence.
+
+The cost is that N moderators produce N events for one message. At this scale
+that is a handful of rows; at a scale where it is not, the answer is a single
+"moderators" recipient with its own delivery preferences, which is a different
+decision record.
+
 ### Messages are notified through the existing pipeline, not a new one
 
 A new message raises a `MESSAGE_RECEIVED` notification event, which goes into
@@ -109,4 +131,15 @@ different decision record.
 
 **Nothing is rate-limited by default except opening threads.** Messages within
 an existing thread are capped per hour per author, on the same reasoning as
-return requests: each one is a message a human has to read.
+return requests: each one is a message a human has to read. The cap lives in the
+routes, where every other rate limit in this codebase lives — not in
+`lib/messaging`, which is called by the placement library too and must not
+refuse a system-generated message.
+
+**`lib/messaging` does not use `notify()`**, and that is a deliberate departure
+from every other caller in the codebase. `notify()` opens its own transaction
+and swallows its own errors so that failing to announce a sale cannot roll back
+the sale. Here the message *is* the thing being announced: a message nobody was
+told about leaves a seller waiting for a reply the moderator queue never showed.
+So the message, the unread counters, the notification rows and the outbox events
+commit together, and a failure propagates to the caller.

@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { isUniqueViolation } from "./pgErrors";
 import { shouldSend } from "./channelPolicy";
 import type { NotificationEvent } from "./outbox";
 import { DeliveryChannel, DeliveryStatus } from "../generated/prisma/enums";
@@ -34,12 +35,6 @@ import { DeliveryChannel, DeliveryStatus } from "../generated/prisma/enums";
  *
  * See docs/adr/0026-delivery-idempotency.md
  */
-
-/** Postgres unique-violation. A collision here is the mechanism working. */
-function isUniqueViolation(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
-  return code === "P2002" || code === "23505";
-}
 
 export type Claim =
   /** This process owns the delivery. Call the provider, then settle it. */

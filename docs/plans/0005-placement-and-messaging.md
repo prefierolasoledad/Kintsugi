@@ -1,6 +1,6 @@
 # Plan 0005 — Letting the platform choose, and letting a seller ask
 
-- **Status:** Phases 0–1 landed 2026-09-11. Phases 2–7 not started.
+- **Status:** Phases 0–2 landed 2026-09-11. Phases 3–7 not started.
 - **Written:** 2026-09-11
 - **Produces:** ADR 0033 (messaging), ADR 0034 (paid placement)
 
@@ -166,7 +166,7 @@ unique-violation.
 | --- | --- | --- |
 | 0 | Decide. ADR 0033 and ADR 0034. | **Recorded 2026-09-11** |
 | 1 | Schema + migration, including the hand-written partial unique index. | **Landed 2026-09-11** — see the note below |
-| 2 | `lib/messaging.ts` — open a thread, post a message, mark read, close. Two new notification event types wired through the outbox. | A message raises exactly one outbox row in the same transaction |
+| 2 | `lib/messaging.ts` — open a thread, post a message, mark read, close. Two new notification event types wired through the outbox. | **Landed 2026-09-11** — 38 assertions in `tests/api/messaging.ts` |
 | 3 | `lib/placement.ts` — request, counter, agree, activate, end, decline, withdraw. Every transition a conditional `UPDATE`. | Two concurrent activations produce one LIVE row, proven by a test that runs them in parallel |
 | 4 | Seller routes: request placement, list threads, read, reply. Admin routes: the placement queue, counter, decide, activate. | Both sides drivable over HTTP with no database access |
 | 5 | Homepage reads live placements. **Promoted label on the hero and the shelf card.** Sold listings drop out. | A LIVE placement appears with its label; marking it SOLD removes it |
@@ -211,6 +211,42 @@ has to call it.
 repository currently sits at exactly 195. It passes, with nothing to spare, so
 the next phase that adds an unhandled promise or an `any` will fail CI on the
 ceiling rather than on its own merits.
+
+### Phase 2, and what it cost
+
+`lib/messaging.ts`, 393 lines, and a 38-assertion suite. Green, and so are the
+three suites the work touched indirectly: returns 43, email-delivery 26,
+outbox 28.
+
+**The interesting decision was not to use `notify()`.** Every other caller in
+the codebase does, and it is wrong here: `notify()` opens its own transaction
+and swallows its own errors, which is correct when the notification is a side
+effect of something more important. A message has nothing more important behind
+it, so the message, the counters, the notification and the outbox event commit
+in one transaction and a failure reaches the caller. `enqueue(tx, …)` takes a
+transaction client precisely so this cannot be written as a dual write — the
+signature is the enforcement.
+
+**Implementation forced a decision the ADR had not made.** "The admin side is a
+role" does not say who receives the notification, because a notification needs a
+`userId`. Answer: every non-suspended `ADMIN`, one event each. Recorded in
+ADR 0033 rather than left in the code, along with the two rejected alternatives
+and the cost.
+
+**The suite asserts against the real admin population**, not against the two
+moderators it creates. Other suites and the seed leave admins behind, so
+`liveAdminIds` is read from the database at fixture time and the fan-out is
+compared to that. Hard-coding 2 would have passed today and broken the first
+time somebody seeded another moderator.
+
+**One cleanup taken rather than a third copy made.** `isUniqueViolation` existed
+twice — in `deliveryLedger.ts` and `returns.ts` — and the two had already
+drifted, one checking Postgres's `23505` as well as Prisma's `P2002` and the
+other not. The placement work needs it a third time, so it is now
+`lib/pgErrors.ts` with the union of both behaviours, and both original callers
+import it. The drift mattered: the partial unique index on live placements is a
+constraint Prisma does not know about, so it raises `23505`, which the narrower
+copy would have rethrown as an unexpected error.
 
 ## 5. What this deliberately does not do
 

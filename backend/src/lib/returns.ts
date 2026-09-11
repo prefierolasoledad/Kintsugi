@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { holdDays } from "./payouts";
 import { issueRefund } from "./refunds";
+import { isUniqueViolation } from "./pgErrors";
 import {
   FulfilmentStatus,
   OrderStatus,
@@ -217,13 +218,6 @@ export async function openReturn(input: {
   }
 }
 
-function isUniqueViolation(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { code?: string }).code === "P2002"
-  );
-}
 
 /* ------------------------------------------------------------------ *
  * Answering it
