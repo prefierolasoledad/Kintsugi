@@ -74,6 +74,23 @@ const POLICY: Record<NotificationType, Policy> = {
 
   /** Push only: an answer to something they raised, not something to file. */
   [NotificationType.REPORT_RESOLVED]: { EMAIL: "off", PUSH: "on", SMS: "off" },
+
+  /**
+   * A reply arrived on a thread. Email ON, because a conversation with the
+   * platform is exactly the kind of thing a seller needs to be able to find
+   * again in three weeks, and push alone is gone the moment it is dismissed.
+   *
+   * SMS off. This is the boundary ADR 0027 drew and it holds here: only money
+   * moving unexpectedly earns a text. A message can wait for a screen.
+   */
+  [NotificationType.MESSAGE_RECEIVED]: { EMAIL: "on", PUSH: "on", SMS: "off" },
+
+  /**
+   * A placement request was answered. Email ON for the same reason — the terms
+   * that were agreed are a commercial record, and "what did we settle on" must
+   * be answerable without opening the app.
+   */
+  [NotificationType.PLACEMENT_DECIDED]: { EMAIL: "on", PUSH: "on", SMS: "off" },
 };
 
 export function channelDefault(
