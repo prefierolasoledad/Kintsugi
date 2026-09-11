@@ -43,6 +43,15 @@ export type CatalogListing = {
   seller: { shopName: string; verified: boolean };
   images: { url: string; alt: string | null; position: number }[];
   rating: { average: number | null; count: number };
+  /**
+   * On the homepage because a seller agreed to pay for the slot.
+   *
+   * Set by the API, never by a page. Wherever it is true the card and the
+   * banner render a "Promoted" label, which is not a styling choice: paid
+   * placement presented as editorial selection is deceptive advertising.
+   * See docs/adr/0034-paid-homepage-placement.md
+   */
+  promoted?: boolean;
 };
 
 export type CatalogReview = {
@@ -163,3 +172,27 @@ export const SORT_OPTIONS = [
   { value: "price_asc", label: "Price: low to high" },
   { value: "price_desc", label: "Price: high to low" },
 ] as const;
+
+export type PromotedShelves = {
+  hero: CatalogListing | null;
+  shelf: CatalogListing[];
+};
+
+/**
+ * The paid placements currently live.
+ *
+ * Never cached, matching the endpoint: somebody bought a window and the first
+ * minute of it is theirs. An empty result is the normal case — most of the time
+ * nothing is promoted at all, and the page falls back to its derived shelves.
+ */
+export async function getPromoted(): Promise<PromotedShelves> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/catalog/promoted`, { cache: "no-store" });
+    if (!res.ok) return { hero: null, shelf: [] };
+    return (await res.json()) as PromotedShelves;
+  } catch {
+    // The homepage has four other shelves. Merchandising being unreachable is
+    // not a reason for none of them to render.
+    return { hero: null, shelf: [] };
+  }
+}

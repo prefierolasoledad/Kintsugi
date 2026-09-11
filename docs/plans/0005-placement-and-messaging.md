@@ -1,6 +1,6 @@
 # Plan 0005 — Letting the platform choose, and letting a seller ask
 
-- **Status:** Phases 0–4 landed 2026-09-11. Phases 5–7 not started.
+- **Status:** all seven phases landed 2026-09-11.
 - **Written:** 2026-09-11
 - **Produces:** ADR 0033 (messaging), ADR 0034 (paid placement)
 
@@ -169,9 +169,9 @@ unique-violation.
 | 2 | `lib/messaging.ts` — open a thread, post a message, mark read, close. Two new notification event types wired through the outbox. | **Landed 2026-09-11** — 38 assertions in `tests/api/messaging.ts` |
 | 3 | `lib/placement.ts` — request, counter, agree, activate, end, decline, withdraw. Every transition a conditional `UPDATE`. | **Landed 2026-09-11** — 43 assertions, and the race proven to fail without the index |
 | 4 | Seller routes: request placement, list threads, read, reply. Admin routes: the placement queue, counter, decide, activate. | **Landed 2026-09-11** — 45 assertions in `tests/api/placement-routes.ts` |
-| 5 | Homepage reads live placements. **Promoted label on the hero and the shelf card.** Sold listings drop out. | A LIVE placement appears with its label; marking it SOLD removes it |
-| 6 | Seller and admin UI: a thread view, a placement request form, an admin merchandising screen. | A negotiation can be completed end to end in a browser |
-| 7 | Sweeper: `AGREED` → `LIVE` when `startsAt` arrives, `LIVE` → `ENDED` when `endsAt` passes. Sixth in-process sweeper. | A placement goes live and ends without anyone pressing anything |
+| 5 | Homepage reads live placements. **Promoted label on the hero and the shelf card.** Sold listings drop out. | **Landed 2026-09-11** — 21 assertions in `tests/api/promoted-homepage.ts`, against the rendered HTML |
+| 6 | Seller and admin UI: a thread view, a placement request form, an admin merchandising screen. | **Landed 2026-09-11** — 16 assertions in `tests/browser/placement.ts`, the whole negotiation in Chromium |
+| 7 | Sweeper: `AGREED` → `LIVE` when `startsAt` arrives, `LIVE` → `ENDED` when `endsAt` passes. Sixth in-process sweeper. | **Landed 2026-09-11** — proven on a timer in the suite, and against the running API |
 
 ### Phase 1, and what it cost
 
@@ -336,6 +336,147 @@ listing, thread or placement gets **404, never 403**, so an id cannot be used to
 ask whether a rival's thing exists; and declining a request without a reason is
 a 400, for the same reason refusing a return requires one.
 
+### Phase 5, and what it cost
+
+`GET /catalog/promoted` (uncached, deliberately — a placement going live is a
+window somebody bought, and a sixty-second cache spends the first minute of it),
+`getPromoted()` in the frontend catalog lib, the label on the banner and the
+card, and a 21-assertion suite that reads the **server-rendered HTML** rather
+than the endpoint. The endpoint saying `promoted: true` proves nothing about
+what a viewer sees.
+
+**The ADR was wrong about where the shelf was, and had to be amended.** It named
+"the Picked for you shelf", which does not exist — that eyebrow sits on Best
+Rated, a *derived* shelf that the ADR's own rule forbids putting paid placement
+into. The slot now renders as its own row.
+
+**Three assertions in this suite were too weak, and two of them passed while the
+feature was broken.** Worth recording in full, because it is the same mistake
+three times — asserting something adjacent to the claim instead of the claim:
+
+1. *"the unpromoted listing is not in the hero"* — failed immediately, and the
+   assertion was wrong rather than the code: a brand-new listing is the newest
+   in the catalogue, so the hero's `discounted[0] ?? everything[0]` fallback
+   shows it, unpromoted and unlabelled, which is correct.
+2. *counting `/Promoted/`* — matched the word inside React's serialized props in
+   the flight payload, so the baseline was never zero.
+3. *counting `>Promoted<` and asserting "at least two"* — the promoted row's own
+   **eyebrow** renders `>Promoted<` too, so hero + eyebrow satisfied it. Proven
+   by disabling the card's label and watching the suite pass anyway.
+
+The fix classifies each occurrence by the markup around it and asserts per
+surface. Re-checked by disabling the card label again:
+
+```
+  PASS  the BANNER carries the label
+  FAIL  and so does the CARD, separately — {"hero":1,"card":0,"eyebrow":1}
+```
+
+The label is the one part of this feature that is a legal requirement rather
+than a product preference, and it is the easiest thing in it to lose silently —
+the flag crosses a table, an endpoint, a fetch, a page, a shelf and a card, and
+any one of them dropping it leaves a deceptive page with nothing red anywhere.
+
+**Lint 218 → 219**, one handler, noted in the config as the procedure requires.
+
+### Phase 6, and what it cost
+
+Four pages — `/seller/messages`, `/seller/placements`, `/admin/messages`,
+`/admin/placements` — one shared `ThreadView`, a `messagingApi` client, and
+additions to `adminApi`. Both navs link to them, because a feature nobody can
+find is indistinguishable from a feature that does not exist. Production build
+clean; the browser suite drives the real sequence with two logged-in parties:
+seller asks → moderator counters → seller accepts → moderator activates → the
+label appears on the homepage.
+
+**THE BROWSER TEST FOUND A REAL BUG, which is the entire reason for writing
+one.** The moderator queue's default tab filtered to `REQUESTED | COUNTERED`,
+and "Make it live" only renders on an `AGREED` row — so the filter hid exactly
+the rows with the button. Every negotiation would have completed and then
+stalled in a state nobody looks at. Nothing else caught it: the library suite
+tested `placementQueue` against the filter it was given, and the route suite
+never asked what a moderator would actually see.
+
+The fix is a second constant, `NEEDS_ADMIN`, separate from the transition guard
+`AWAITING_ADMIN`, because "what a moderator can answer" and "what needs a
+moderator's hand" are genuinely different sets. The tab is now labelled
+"Needs you".
+
+**Three assertions of mine were wrong again, and the pattern is worth naming.**
+All three asserted something adjacent to the claim:
+
+- Looking for `LIVE` in the queue after activation. Activating moves the row
+  *out* of that tab by design — it no longer needs anybody. The live-slots card
+  at the top of the screen is what proves it, which is why that card is the
+  first thing on the page.
+- `/Promoted/` against `innerText`. Chromium returns the **rendered** text and
+  both labels are `uppercase` in CSS, so the browser reports `PROMOTED`. A
+  correctly-labelled page failed a case-sensitive match.
+- Not naming the pre-login phase `pre-login`, which is the exact string
+  `realFailures()` exempts — so the auth probe's expected 401 counted as a
+  failed request.
+
+**One environment lesson, twice.** The API runs as `tsx src/index.ts` with no
+watcher, so editing a library and re-running a suite tests the OLD code. It cost
+a confusing failure in phase 5 (`/catalog/promoted` returning HTML) and another
+here (the queue still filtering the old way). Restart the API after touching
+`src/`.
+
+**One accommodation, stated so it is not mistaken for a fix.** The browser suite
+warms `/seller/placements`, `/seller/messages` and both admin routes with a
+plain fetch before opening Chromium. Against a dev server the first request to a
+route compiles it — about sixty seconds here — which blew Playwright's 30s
+navigation timeout on pages that work fine once built. The warm-up removes a
+one-off compile from the middle of a journey the suite is trying to time; it is
+not hiding a slow page.
+
+### Phase 7, and what it cost
+
+`startPlacementSweeper()`, every 60 seconds, started in `index.ts` beside the
+other five. The logic already existed from phase 3, so this phase was the timer
+and the proof that it runs.
+
+**In-process on every replica, not a CronJob**, and the distinction is the one
+[ADR 0032](../adr/0032-kubernetes-manifests.md) drew. The payout job is
+scheduled because it *moves money to a third party* and wanted an exit code and
+a record. This one changes a status on a row we own. Ending is a conditional
+`updateMany` and activating is a claim against the partial unique index, so N
+replicas sweeping at once produce one winner per slot and the losers report
+`slot-taken` — nothing done twice, nothing done N times.
+
+**Proven three ways, because "written but never invoked" is a mistake this
+repository has already shipped once** — a sweeper existed, the README said it
+ran, and nothing called it:
+
+1. The suite starts it at a 300ms interval and polls: `AGREED → LIVE`, then
+   `LIVE → ENDED` after the window is backdated, with nothing pressed.
+2. It asserts `src/index.ts` actually contains `startPlacementSweeper()`. A
+   blunt check, and the only one that fails when somebody deletes the call.
+3. It stops cleanly — after `stop()`, three intervals pass and nothing moves,
+   so a suite that starts one cannot leak a timer into the next.
+
+And then the real thing: the API was restarted, an `AGREED` placement due an
+hour ago was left in the database, and nobody touched it.
+
+```
+AGREED and due: b504ae89-2b39-49ad-8068-ce6988b529c0
+THE RUNNING API ACTIVATED IT ON ITS OWN after at most 90s (status LIVE)
+```
+
+with the API's own log line confirming it from the other side:
+
+```
+Placements: 1 live, 0 ended, 0 waiting for a slot
+```
+
+`blocked` is in that line deliberately: a nonzero value is not a fault, it is a
+placement queued behind a live one, and a reader seeing it should not have to
+look that up.
+
+**Lint 219 → 220**, one `setInterval` with an async tick — identical to the five
+sweepers already in the count, and noted in the config as the procedure
+requires.
+
 ## 5. What this deliberately does not do
 
 Stated here so the next person does not go looking.
@@ -357,12 +498,40 @@ Stated here so the next person does not go looking.
 The repository states its own size in several places, and adding two
 notification event types makes every one of them stale:
 
-| Claim | Today | After |
-| --- | --- | --- |
-| Notification event types | 11 | 13 |
-| Tables | 28 | 31 |
-| Decision records | 32 | 34 |
-| Routers | 16 | 17 or 18 |
+| Claim | Before | After | Updated in |
+| --- | --- | --- | --- |
+| Notification event types | 11 | **13** | `channelPolicy.ts` is exhaustive, so the compiler insisted |
+| Tables | 28 | **31** | `lld.md` |
+| Decision records | 32 | **34** | `README.md`, `docs/adr/README.md` (both rows added) |
+| Routers | 16 | **18** | `README.md` |
+| In-process sweepers | 5 | **6** | `README.md`, `hld.md` |
+| Assertions / suites | 1,263 / 35 | **1,418 / 40** | `README.md` ×3, `hld.md` |
+| Suite runtime | ~13 min | **~17 min** | `hld.md` |
+
+All measured in one clean run rather than added up:
+
+```
+1418 passed, 0 failed across 40 suites   1033s total
+```
+
+The first attempt at that run reported `1390 passed, 1 failed`, and the failure
+was environmental rather than a defect: the `outbox` suite has a pre-flight
+guard that detects a competing relay, and the API left running for the browser
+suites had `RELAY_IN_PROCESS=true`, so its in-process relay was draining the
+rows the suite wanted to claim. Restarted with `RELAY_IN_PROCESS=false` and
+re-run whole, because 1,390 + the outbox suite's 28 from a different run is
+arithmetic, not a measurement.
+
+Two documentation gaps turned up while doing this, both worth more than the
+numbers:
+
+- **`docs/api.md` documents every router exhaustively**, so it was missing five
+  endpoint families. Added, including why `disclosure` is in the API response
+  and why `SLOT_TAKEN` is a 409 rather than a 500.
+- **`lld.md` indexes every `lib/` module** and claimed `notifications.ts` has
+  "eleven call sites" — wrong twice over. It now records that `lib/messaging.ts`
+  deliberately does not use `notify()`, and there is a new
+  "messaging and merchandising" group for the three new modules.
 
 `README.md`, `docs/api.md`, `docs/architecture/lld.md`, `docs/architecture/hld.md`
 and the published architecture reference all carry at least one of these.

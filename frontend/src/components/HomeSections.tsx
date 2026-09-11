@@ -18,12 +18,16 @@ import { useAuth } from "@/lib/AuthContext";
  */
 export default function HomeSections({
   categories,
+  promotedHero,
+  promotedShelf,
   discounted,
   topRated,
   newArrivals,
   everything,
 }: {
   categories: CatalogCategory[];
+  promotedHero: CatalogListing | null;
+  promotedShelf: CatalogListing[];
   discounted: CatalogListing[];
   topRated: CatalogListing[];
   newArrivals: CatalogListing[];
@@ -36,9 +40,27 @@ export default function HomeSections({
     <>
       <Nav />
       <main className="flex-1">
+        {/*
+          A live hero placement wins the banner. Falling back to a discounted
+          listing keeps the page identical to before whenever nothing is
+          promoted, which is most of the time.
+        */}
         <HeroBanner
           categories={categories}
-          feature={discounted[0] ?? everything[0] ?? null}
+          feature={promotedHero ?? discounted[0] ?? everything[0] ?? null}
+        />
+
+        {/*
+          Its own row, disclosed twice: the eyebrow says Promoted and every
+          card carries the label. ProductRow renders nothing when the list is
+          empty, so this disappears entirely when nothing is booked.
+        */}
+        <ProductRow
+          eyebrow="Promoted"
+          title="Featured this week"
+          listings={promotedShelf}
+          viewAllHref="/search"
+          viewAllInHeader
         />
 
         <ProductRow

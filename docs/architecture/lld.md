@@ -101,7 +101,7 @@ The pipeline, roughly in the order an event travels. Decisions are
 
 | Module | Responsibility |
 | --- | --- |
-| `notifications.ts` | `notify()` / `notifyMany()` — writes the notification **and** its outbox row in one transaction. The eleven call sites only ever touch `events.*` |
+| `notifications.ts` | `notify()` / `notifyMany()` — writes the notification **and** its outbox row in one transaction, and swallows its own errors so a failed announcement cannot roll back a sale. `lib/messaging.ts` deliberately does NOT use it ([ADR 0033](../adr/0033-seller-admin-messaging.md)) |
 | `outbox.ts` | `enqueue(tx, event)`, which takes a transaction client so it cannot be called outside one. Also the event codec |
 | `relay.ts` | Claims unpublished rows with `FOR UPDATE SKIP LOCKED` and publishes them. N relays divide the backlog rather than duplicating it |
 | `notifyTransport.ts` | The `inline` / `kafka` seam. Under `inline` the relay calls the consumer functions directly — no broker, which is what CI runs |
@@ -120,6 +120,18 @@ The pipeline, roughly in the order an event travels. Decisions are
 | `smsVerification.ts` | Six-digit codes: hashed, ten-minute expiry, attempt-capped |
 | `phone.ts` | E.164 normalisation. Deliberately shape-only — the code is what proves a number is real |
 | `quietHours.ts` | The window, and the arithmetic for one that wraps midnight |
+
+### `lib/` reference — messaging and merchandising
+
+Two-way conversation, and choosing what the homepage shows. Decisions are
+[ADR 0033](../adr/0033-seller-admin-messaging.md) and
+[ADR 0034](../adr/0034-paid-homepage-placement.md).
+
+| Module | Responsibility |
+| --- | --- |
+| `messaging.ts` | Threads with a seller on one side and the moderator **role** on the other. Writes the message, the unread counters, the notification and the outbox event in ONE transaction — unlike `notify()`, because here the message is the thing rather than a side effect of it |
+| `placement.ts` | The seven-state placement machine, every transition a conditional `UPDATE`. `activate()` is a claim against the partial unique index `placement_live_slot`, so two moderators cannot produce two heroes; the loser is told `slot-taken` and stays `AGREED`. Also `sweepPlacements()` and the sixth in-process sweeper |
+| `pgErrors.ts` | `isUniqueViolation()` — Prisma's `P2002` **and** Postgres's `23505`, the latter because the partial index is a constraint Prisma does not know about |
 
 ### Frontend modules
 

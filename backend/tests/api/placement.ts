@@ -1,5 +1,6 @@
 import { prisma, requireServices } from "../lib/db";
 import { main, wireInterrupt, cleanupOnInterrupt } from "../lib/harness";
+import { readFileSync } from "fs";
 import {
   acceptAsOffered,
   acceptCounter,
@@ -12,6 +13,7 @@ import {
   placementQueue,
   placementsForSeller,
   requestPlacement,
+  startPlacementSweeper,
   sweepPlacements,
   withdrawPlacement,
 } from "../../src/lib/placement";
@@ -585,8 +587,116 @@ void main(
 
     const pending = await placementQueue({ pendingOnly: true });
     t.check(
-      pending.every((p) => p.status === "REQUESTED" || p.status === "COUNTERED"),
-      "the moderator queue holds only what is awaiting an answer"
+      pending.every(
+        (p) => p.status === "REQUESTED" || p.status === "COUNTERED" || p.status === "AGREED"
+      ),
+      "the moderator queue holds everything needing a moderator's hand",
+      JSON.stringify([...new Set(pending.map((p) => p.status))])
+    );
+    /**
+     * AGREED specifically, because leaving it out was a bug: the button that
+     * makes a placement live only appears on an agreed row, so a filter that
+     * hid them stalled every completed negotiation.
+     */
+    t.check(
+      !pending.some((p) => p.status === "LIVE" || p.status === "DECLINED"),
+      "and nothing already settled"
+    );
+
+    /* ---- 9. on a timer, with nobody pressing anything ---- */
+
+    t.section("9. the sweeper runs itself");
+
+    /**
+     * WIRED, NOT JUST WRITTEN.
+     *
+     * This repository has shipped a sweeper that existed and was never invoked,
+     * and the README claimed it ran. Reading the source is a blunt check and it
+     * is the only one that fails when somebody deletes the call.
+     */
+    const bootstrap = readFileSync("src/index.ts", "utf8");
+    t.check(
+      /startPlacementSweeper\(\)/.test(bootstrap),
+      "src/index.ts actually calls startPlacementSweeper()",
+      "the sweeper is written but never started"
+    );
+
+    const timerListing = await makeListing({
+      title: "Swept into place",
+      status: ListingStatus.ACTIVE,
+    });
+    const timed = await requestPlacement({
+      sellerId,
+      listingId: timerListing,
+      slot: PlacementSlot.PICKED_SHELF,
+      position: 2,
+      offeredCents: 1100,
+      startsAt: new Date(Date.now() - DAY),
+      endsAt: new Date(Date.now() + DAY),
+      note: "Due to start yesterday, so a running sweeper should pick it up.",
+    });
+    if (!timed.requested) throw new Error("fixture: timed request failed");
+    threadIds.push(timed.threadId);
+    await acceptAsOffered({ id: timed.id, adminUserId: adminA });
+
+    async function statusOf(id: string) {
+      const row = await prisma.placementRequest.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      return row.status;
+    }
+
+    /** Polls rather than sleeping a fixed time, so a slow machine does not fail. */
+    async function waitForStatus(id: string, want: PlacementStatus, budgetMs = 8000) {
+      const until = Date.now() + budgetMs;
+      while (Date.now() < until) {
+        if ((await statusOf(id)) === want) return true;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      return false;
+    }
+
+    t.check(
+      (await statusOf(timed.id)) === PlacementStatus.AGREED,
+      "it is AGREED and nobody has activated it"
+    );
+
+    /** A fast interval so the assertion is about the timer, not about patience. */
+    const stop = startPlacementSweeper(300);
+    try {
+      t.check(
+        await waitForStatus(timed.id, PlacementStatus.LIVE),
+        "the sweeper makes it LIVE on its own",
+        `status is ${await statusOf(timed.id)}`
+      );
+
+      await prisma.placementRequest.update({
+        where: { id: timed.id },
+        data: { endsAt: new Date(Date.now() - 1000) },
+      });
+
+      t.check(
+        await waitForStatus(timed.id, PlacementStatus.ENDED),
+        "and ENDS it when the window closes, also on its own",
+        `status is ${await statusOf(timed.id)}`
+      );
+    } finally {
+      stop();
+    }
+
+    /**
+     * The stop function has to work, or every suite that starts one leaks a
+     * timer into the next.
+     */
+    await prisma.placementRequest.update({
+      where: { id: timed.id },
+      data: { status: PlacementStatus.AGREED, endsAt: new Date(Date.now() + DAY) },
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    t.check(
+      (await statusOf(timed.id)) === PlacementStatus.AGREED,
+      "and stopping it really stops it — nothing moved after three intervals"
     );
   },
 

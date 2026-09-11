@@ -146,7 +146,14 @@ export default defineConfig([
        *   count growing with route handlers is expected, growing anywhere else
        *   would mean the pattern had spread.
        *
-       *   The wrapper is now overdue at ~156 call sites and remains the right
+       *   218 -> 219 (the promoted feed). One handler:
+       *   `GET /catalog/promoted`, which the homepage reads.
+       *
+       *   219 -> 220 (the placement sweeper). One `setInterval(tick, …)` with
+       *   an async tick, identical to the five sweepers already started in
+       *   `index.ts` — and the reason those five are in this count too.
+       *
+       *   The wrapper is now overdue at ~158 call sites and remains the right
        *   fix, still not to be done in the same breath as a feature.
        */
       "@typescript-eslint/no-misused-promises": "warn",

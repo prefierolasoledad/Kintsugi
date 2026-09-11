@@ -43,6 +43,17 @@ export default function ListingCard({ item }: { item: CatalogListing }) {
 
         {/* Badges, top-left */}
         <div className="pointer-events-none absolute top-3 left-3 flex flex-col items-start gap-2">
+          {/*
+            FIRST, AND NOT OPTIONAL. A paid placement says so before it says
+            anything else — above the discount, above NEW — because the one
+            thing a viewer needs in order to read the rest honestly is that
+            somebody paid to put this here. ADR 0034.
+          */}
+          {item.promoted && (
+            <span className="rounded bg-ink px-3 py-1 text-xs font-medium tracking-wide text-paper uppercase">
+              Promoted
+            </span>
+          )}
           {discount && (
             <span className="rounded bg-gold px-3 py-1 text-xs font-medium text-paper">
               -{discount}%

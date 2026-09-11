@@ -551,3 +551,146 @@ export const ACTION_LABEL: Record<string, string> = {
   REVIEW_REMOVED: "Removed review",
   REPORT_DISMISSED: "Dismissed report",
 };
+
+/* ================================================================== *
+ * Merchandising and seller conversations (ADR 0033, ADR 0034)
+ * ================================================================== */
+
+export type AdminPlacementSlot = "HERO" | "PICKED_SHELF";
+
+export type AdminPlacementStatus =
+  | "REQUESTED"
+  | "COUNTERED"
+  | "AGREED"
+  | "LIVE"
+  | "ENDED"
+  | "DECLINED"
+  | "WITHDRAWN";
+
+export type AdminPlacement = {
+  id: string;
+  slot: AdminPlacementSlot;
+  position: number;
+  offeredCents: number;
+  agreedCents: number | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  status: AdminPlacementStatus;
+  threadId: string;
+  createdAt: string;
+  decidedAt: string | null;
+  listing: { id: string; title: string; slug: string; status: string };
+  seller: { id: string; shopName: string | null };
+};
+
+export type LiveSlot = {
+  id: string;
+  slot: AdminPlacementSlot;
+  position: number;
+  listingId: string;
+  slug: string;
+};
+
+export type AdminThread = {
+  id: string;
+  kind: "PLACEMENT" | "SUPPORT";
+  subject: string;
+  lastMessageAt: string;
+  closedAt: string | null;
+  unread: number;
+  seller: { id: string; shopName: string | null };
+  placement: {
+    id: string;
+    status: AdminPlacementStatus;
+    slot: AdminPlacementSlot;
+    offeredCents: number;
+  } | null;
+};
+
+export type AdminThreadDetail = Omit<AdminThread, "placement"> & {
+  messages: { id: string; author: "SELLER" | "ADMIN"; body: string; createdAt: string }[];
+  placement:
+    | (AdminThread["placement"] & {
+        position: number;
+        agreedCents: number | null;
+        startsAt: string | null;
+        endsAt: string | null;
+        listing: { id: string; title: string; slug: string };
+      })
+    | null;
+};
+
+export function getPlacementQueue(pendingOnly: boolean) {
+  return request<{ placements: AdminPlacement[]; live: LiveSlot[] }>(
+    `/placements${pendingOnly ? "?pending=1" : ""}`
+  );
+}
+
+export function counterPlacement(
+  id: string,
+  input: {
+    agreedCents: number;
+    slot?: AdminPlacementSlot;
+    position?: number;
+    startsAt?: string;
+    endsAt?: string;
+    note: string;
+  }
+) {
+  return request<{ status: AdminPlacementStatus }>(`/placements/${id}/counter`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function acceptPlacement(id: string, note?: string) {
+  return request<{ status: AdminPlacementStatus }>(`/placements/${id}/accept`, {
+    method: "POST",
+    body: JSON.stringify({ note }),
+  });
+}
+
+export function declinePlacement(id: string, note: string) {
+  return request<{ status: AdminPlacementStatus }>(`/placements/${id}/decline`, {
+    method: "POST",
+    body: JSON.stringify({ note }),
+  });
+}
+
+export function activatePlacement(id: string) {
+  return request<{ status: string }>(`/placements/${id}/activate`, { method: "POST" });
+}
+
+export function endPlacement(id: string) {
+  return request<{ status: string }>(`/placements/${id}/end`, { method: "POST" });
+}
+
+export function getAdminThreads(unansweredOnly: boolean) {
+  return request<{ threads: AdminThread[]; unreadThreads: number }>(
+    `/messages${unansweredOnly ? "?unanswered=1" : ""}`
+  );
+}
+
+export function getAdminThread(id: string) {
+  return request<{ thread: AdminThreadDetail }>(`/messages/${id}`);
+}
+
+export function replyAsAdmin(id: string, body: string) {
+  return request<{ id: string }>(`/messages/${id}/reply`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+}
+
+export function closeAdminThread(id: string) {
+  return request<{ closed: boolean }>(`/messages/${id}/close`, { method: "POST" });
+}
+
+export function reopenAdminThread(id: string) {
+  return request<{ closed: boolean }>(`/messages/${id}/reopen`, { method: "POST" });
+}
+
+export const ADMIN_SLOT_LABEL: Record<AdminPlacementSlot, string> = {
+  HERO: "Hero banner",
+  PICKED_SHELF: "Featured shelf",
+};

@@ -148,6 +148,20 @@ export default function SellerDashboard() {
               >
                 Payouts
               </Link>
+              {/* Talking to us, and asking for the homepage. Both are new and
+                  neither is discoverable from anywhere else a seller looks. */}
+              <Link
+                href="/seller/messages"
+                className="rounded-full border border-line px-5 py-2.5 text-sm font-medium text-ink transition hover:border-gold/40"
+              >
+                Messages
+              </Link>
+              <Link
+                href="/seller/placements"
+                className="rounded-full border border-line px-5 py-2.5 text-sm font-medium text-ink transition hover:border-gold/40"
+              >
+                Homepage
+              </Link>
               <Link
                 href="/seller/listings/new"
                 className="rounded-full bg-gold-dim px-5 py-2.5 text-sm font-semibold text-paper transition hover:brightness-90"

@@ -11,6 +11,7 @@ import {
 } from "../lib/cacheKeys";
 import { prisma } from "../lib/prisma";
 import { ratingBreakdown, verifiedBuyers } from "../lib/reviews";
+import { livePlacements } from "../lib/placement";
 import { ListingStatus, VerificationStatus } from "../generated/prisma/enums";
 
 export const catalogRouter = Router();
@@ -139,6 +140,63 @@ function serializeListing(row: ListingRow, rating: RatingAgg) {
     rating,
   };
 }
+
+/**
+ * What is on the homepage because somebody agreed to pay for it.
+ *
+ * DELIBERATELY NOT CACHED, unlike every other read in this file. A placement
+ * going live is a commercial commitment with a start time, and serving it from
+ * a sixty-second cache means the thing somebody paid for is absent for the
+ * first minute of the window they bought. The query is two indexed lookups on a
+ * table with a handful of live rows.
+ *
+ * `livePlacements()` already excludes listings that are not ACTIVE, so a
+ * promoted item that sells disappears here without anything having to notice.
+ *
+ * The response says `promoted: true` on every listing it returns. That flag is
+ * what the card and the banner render their label from, and it travels with the
+ * data rather than being inferred by the page — a client that forgets to set it
+ * cannot accidentally render a paid placement as an editorial pick.
+ *
+ * See docs/adr/0034-paid-homepage-placement.md
+ */
+catalogRouter.get("/promoted", async (_req, res) => {
+  try {
+    const placements = await livePlacements();
+    if (placements.length === 0) return res.json({ hero: null, shelf: [] });
+
+    const rows = await prisma.listing.findMany({
+      where: { id: { in: placements.map((p) => p.listingId) }, ...VISIBLE },
+      include: listingInclude,
+    });
+    const ratings = await ratingsFor(rows.map((r) => r.id));
+    const byId = new Map(
+      rows.map((r) => [r.id, { ...serializeListing(r, ratings.get(r.id) ?? NO_RATING), promoted: true as const }])
+    );
+
+    const hero =
+      placements
+        .filter((p) => p.slot === "HERO")
+        .map((p) => byId.get(p.listingId))
+        .find((x) => x !== undefined) ?? null;
+
+    const shelf = placements
+      .filter((p) => p.slot === "PICKED_SHELF")
+      .sort((a, b) => a.position - b.position)
+      .map((p) => byId.get(p.listingId))
+      .filter((x): x is NonNullable<typeof x> => x !== undefined);
+
+    res.json({ hero, shelf });
+  } catch (err) {
+    console.error("GET /catalog/promoted failed", err);
+    /**
+     * An empty answer rather than a 500. The homepage is the busiest page on
+     * the site and it has four other shelves that work; a merchandising table
+     * being unreachable must not take it down.
+     */
+    res.json({ hero: null, shelf: [] });
+  }
+});
 
 catalogRouter.get("/categories", async (_req, res) => {
   try {

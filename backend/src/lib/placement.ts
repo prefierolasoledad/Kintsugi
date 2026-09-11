@@ -54,8 +54,24 @@ const SELLER_CAN_WITHDRAW: PlacementStatus[] = [
   PlacementStatus.AGREED,
 ];
 
-/** States an admin can still answer. */
+/** States an admin can still answer — the transition guard for counter/decline. */
 const AWAITING_ADMIN: PlacementStatus[] = [PlacementStatus.REQUESTED, PlacementStatus.COUNTERED];
+
+/**
+ * States that need a moderator to DO something, which is a wider set than the
+ * ones they can answer.
+ *
+ * `AGREED` belongs here and the omission was a real bug, found by driving the
+ * panel in a browser: an agreed placement is waiting to be made live, the
+ * button to do it only appears on an agreed row, and the queue's default filter
+ * hid exactly those rows. The negotiation completed and then stalled somewhere
+ * nobody looks.
+ */
+const NEEDS_ADMIN: PlacementStatus[] = [
+  PlacementStatus.REQUESTED,
+  PlacementStatus.COUNTERED,
+  PlacementStatus.AGREED,
+];
 
 function money(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -514,6 +530,53 @@ export async function sweepPlacements(now = new Date()): Promise<{
   return { activated, blocked, ended: ended.count };
 }
 
+/**
+ * Every minute.
+ *
+ * A placement has a start date, and a seller who bought a window starting
+ * Monday expects it on Monday rather than whenever somebody next opens the
+ * panel. A minute is the smallest unit the dates are meaningful in, and the
+ * sweep is two indexed queries against a table with a handful of rows in the
+ * states it looks at.
+ *
+ * IN-PROCESS, ON EVERY REPLICA, and that is safe rather than wasteful — the
+ * same reasoning as the other five (ADR 0032). Ending is one conditional
+ * `updateMany`, and activating is a claim against the partial unique index, so
+ * N replicas sweeping at once produce one winner per slot and the losers report
+ * `slot-taken`. Nothing is done twice and nothing is done N times.
+ *
+ * NOT A CronJob, unlike payouts. That one is scheduled because it MOVES MONEY
+ * TO A THIRD PARTY and wanted an exit code and a record; this one changes a
+ * status on a row we own. The distinction is the one ADR 0032 drew, and it is
+ * worth keeping: a CronJob per sweeper would serialise work that currently
+ * parallelises.
+ */
+export function startPlacementSweeper(intervalMs = 60_000) {
+  async function tick() {
+    try {
+      const { activated, blocked, ended } = await sweepPlacements();
+      /**
+       * Silent when nothing happened, which is almost always. `blocked` is in
+       * the line because a nonzero value is NOT a fault — it is a placement
+       * queued behind a live one — and a reader who sees it needs to know that
+       * without going to look it up.
+       */
+      if (activated > 0 || ended > 0 || blocked > 0) {
+        console.log(
+          `Placements: ${activated} live, ${ended} ended, ${blocked} waiting for a slot`
+        );
+      }
+    } catch (err) {
+      console.error("Placement sweeper failed", err);
+    }
+  }
+
+  void tick();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 /* ------------------------------------------------------------------ *
  * Reading
  * ------------------------------------------------------------------ */
@@ -542,10 +605,10 @@ export async function placementsForSeller(sellerId: string) {
   });
 }
 
-/** The moderator queue: what is waiting on a decision, oldest first. */
+/** The moderator queue: everything needing a moderator's hand, oldest first. */
 export async function placementQueue(opts: { pendingOnly?: boolean } = {}) {
   return prisma.placementRequest.findMany({
-    where: opts.pendingOnly ? { status: { in: AWAITING_ADMIN } } : {},
+    where: opts.pendingOnly ? { status: { in: NEEDS_ADMIN } } : {},
     select: { ...placementSelect, seller: { select: { id: true, shopName: true } } },
     orderBy: [{ status: "asc" }, { createdAt: "asc" }],
     take: 100,

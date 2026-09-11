@@ -50,6 +50,16 @@ export default function HeroBanner({
           )}
 
           <div className="relative flex h-full flex-col justify-center gap-5 p-10 sm:p-14">
+            {/*
+              Disclosed at the top of the banner, not tucked under the button.
+              A hero somebody paid for has to say so where it is read first.
+              ADR 0034.
+            */}
+            {feature?.promoted && (
+              <span className="w-fit rounded border border-paper/40 px-3 py-1 text-xs font-medium tracking-widest text-paper uppercase">
+                Promoted
+              </span>
+            )}
             <p className="text-sm text-paper/80">
               {feature ? feature.category.title : "Secondhand, chosen with care"}
             </p>

@@ -12,7 +12,7 @@ a Next.js storefront, an Express API, and PostgreSQL.
 > **Status: working end to end.** Browsing, accounts, selling, checkout,
 > payments, refunds, buyer-initiated returns, seller payouts, order fulfilment,
 > identity verification, email, web push, SMS, and an admin dashboard all work —
-> covered by **1,263 assertions across 35 suites** (`npm test`), run against the
+> covered by **1,418 assertions across 40 suites** (`npm test`), run against the
 > real stack rather than mocks, 1,273 with a Kafka broker present.
 >
 > It also *deploys*: [Kubernetes manifests](k8s/) with a CloudNativePG cluster,
@@ -174,7 +174,7 @@ npm test -- api             # only the API suites
 npm test -- refunds         # any suite whose name matches
 ```
 
-**1,263 assertions across 35 suites**, and they drive the actual stack — a real
+**1,418 assertions across 40 suites**, and they drive the actual stack — a real
 Postgres, the real Express API, and a production build of the frontend under
 Playwright. Nothing is mocked, because the bugs worth catching here live in the
 seams between those pieces rather than inside any one of them.
@@ -452,7 +452,7 @@ The README stays deliberately short. Everything else lives in [`docs/`](docs/):
 | [Low-level design](docs/architecture/lld.md) | Module responsibilities, key flows, sequence diagrams |
 | [Data model](docs/architecture/data-model.md) | ER diagram and table-by-table reference |
 | [API reference](docs/api.md) | Every endpoint, with request and response shapes |
-| [Decision records](docs/adr/README.md) | 32 ADRs on why things are built the way they are, all accepted |
+| [Decision records](docs/adr/README.md) | 34 ADRs on why things are built the way they are, all accepted |
 | [Kubernetes](k8s/README.md) | The manifests, what is verified on kind, and what is not |
 | [Contributing](CONTRIBUTING.md) | Local setup, conventions, testing expectations |
 | [Security](SECURITY.md) | Reporting vulnerabilities, and the security posture |
@@ -474,9 +474,9 @@ Kintsugi/
 │   │   │               notifications, moderation, cache, rate limiting,
 │   │   │               mail, SMS, push, storage, images, KYC
 │   │   ├── middleware/ requireAuth, requireSeller, requireAdmin
-│   │   └── routes/     16 routers — auth, catalog, seller, orders,
+│   │   └── routes/     18 routers — auth, catalog, seller, orders,
 │   │                   reservations, payouts, admin, webhooks, and the rest
-│   └── tests/          35 suites: api/, browser/, and shared fixtures
+│   └── tests/          40 suites: api/, browser/, and shared fixtures
 ├── frontend/           Next.js storefront
 │   └── src/
 │       ├── app/        Routes, including BFF handlers under app/api/*
@@ -589,6 +589,28 @@ never learns the backend's address. See
   straight to the same consumer functions in-process, so CI and fork pull
   requests need no Kafka
 
+**Talking to sellers, and choosing what the homepage shows**
+
+- Seller ↔ moderator message threads — the first two-way surface in the
+  application. One side is a seller, the other is the **role**: no admin user id
+  sits on a thread, because moderation is a shift rather than an assignment
+  ([ADR 0033](docs/adr/0033-seller-admin-messaging.md))
+- Sellers can ask for a homepage slot and negotiate the terms in that thread —
+  counter, accept, decline, withdraw
+- Two typed slots. Only one placement can be live per slot, enforced by a
+  **partial unique index** rather than a check, so two moderators activating at
+  once produce one hero and the loser is told the slot is taken
+  ([ADR 0034](docs/adr/0034-paid-homepage-placement.md))
+- **Paid placements are labelled "Promoted"** on the banner, on the card and in
+  the row heading. Undisclosed paid placement dressed as editorial selection is
+  deceptive advertising, so the disclosure is served by the API rather than left
+  to the client
+- Paid slots cannot enter the *derived* shelves — Price Drops and Best Rated
+  stay earned, because a card placed among them looks exactly like one that
+  qualified
+- A sixth sweeper starts a placement when its window opens and ends it when the
+  window closes, with nobody pressing anything
+
 **Operations**
 
 - Admin dashboard — metrics, orders, customers, catalogue, reports, audit log
@@ -600,6 +622,23 @@ never learns the backend's address. See
   caching for the catalogue ([ADR 0018](docs/adr/0018-redis-for-shared-ephemeral-state.md))
 
 ## Not built yet
+
+- **Collecting a placement fee.** The platform can negotiate one, agree it, and
+  record it; it cannot charge it. Money moves in exactly two directions here —
+  buyer to platform and platform to seller — and a third would need its own
+  claim-then-charge guard, idempotency key, invoice, tax treatment and a refund
+  path for placement paid for and not delivered. Settlement happens outside the
+  application, and [ADR 0034](docs/adr/0034-paid-homepage-placement.md) records
+  why that line was drawn rather than crossed. It is the largest gap this
+  feature ships with.
+
+- **Buyer ↔ seller messaging.** Sellers can talk to the platform, not to their
+  buyers. The table is the easy part; abuse reporting, blocking and
+  contact-detail scrubbing are the real cost — a marketplace whose members can
+  swap phone numbers has invented a way to take the transaction off-platform,
+  which means outside the refund and return guarantees the rest of this
+  repository exists to provide
+  ([ADR 0033](docs/adr/0033-seller-admin-messaging.md)).
 
 - **Stripe Connect against the real thing.** The payout path is complete and
   exercised end to end, but only against `PAYOUT_PROVIDER=stub`. No connected
@@ -623,8 +662,9 @@ never learns the backend's address. See
   Compose with `node dist/jobs.js payouts:pending`.
 
   **The recovery sweepers, by contrast, already run** — reservations, in-flight
-  orders, quiet-hours deliveries, stale deliveries and outbox retention all
-  start with the API ([`src/index.ts`](backend/src/index.ts)). That is not a
+  orders, quiet-hours deliveries, stale deliveries, outbox retention and
+  homepage placements all start with the API
+  ([`src/index.ts`](backend/src/index.ts)). That is not a
   contradiction of the line above: each claims its work with a conditional
   `UPDATE`, so N replicas divide it rather than doing it N times. Recovering
   state nothing in the request path can reach is a different job from moving

@@ -279,6 +279,16 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
 
 ## 7. Known limitations
 
+- **A placement fee can be agreed and cannot be collected.** Money moves in two
+  directions here — buyer to platform, platform to seller. A seller-to-platform
+  charge is a third, and it needs its own claim-then-charge guard, idempotency
+  key, invoice, tax treatment and a refund path for placement paid for and never
+  delivered. None of that is built: `agreedCents` is a record of what both sides
+  settled on, and settlement happens outside the application. It also means the
+  question "what if a promoted listing sells on day one" is answered by dropping
+  it from the homepage with nothing owed back, which is only tenable because
+  nothing was taken. [ADR 0034](../adr/0034-paid-homepage-placement.md).
+
 - **Payouts have never run against Stripe Connect.** The path is built and
   exercised end to end — claim, transfer, reversal, debt netting, both screens —
   but only under `PAYOUT_PROVIDER=stub`. No connected account has been created,
@@ -307,9 +317,11 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
 
   **Under Kubernetes it is a CronJob**, every fifteen minutes, and it is the one
   scheduled job in the system ([ADR 0032](../adr/0032-kubernetes-manifests.md)).
-  The five recovery sweepers are *not* scheduled and never were: they run in the
+  The six recovery sweepers are *not* scheduled and never were: they run in the
   API process on every replica, claiming work with a conditional `UPDATE` so
-  replicas divide it. This one is a Job because it calls a payment provider,
+  replicas divide it — the sixth, homepage placements, claims against a partial
+  unique index instead, which divides the work the same way
+  ([ADR 0034](../adr/0034-paid-homepage-placement.md)). This one is a Job because it calls a payment provider,
   which wants an exit code and a start time rather than a line in an
   application log.
 - **Failover is manual under Compose, and automatic under Kubernetes.** Both
@@ -364,8 +376,8 @@ URL. R2 or any other S3-compatible service drops in without touching a caller.
 - **Aggregate ratings are computed per request.** One extra grouped query per
   page. Denormalising onto `Listing` is the optimisation, at the cost of
   keeping it consistent.
-- **The suite needs the real stack, and takes about thirteen minutes.** Nothing
-  is mocked — 1,263 assertions across 35 suites drive a real Postgres, the real
+- **The suite needs the real stack, and takes about seventeen minutes.** Nothing
+  is mocked — 1,418 assertions across 40 suites drive a real Postgres, the real
   Express API, and a production build of the storefront under a real browser. The
   cost of that choice is that `npm test` cannot run against nothing: it needs a
   database, a Redis, and both servers up. See

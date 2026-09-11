@@ -111,6 +111,14 @@ it.
 `HERO` and `PICKED_SHELF` only. Price Drops, Best Rated and New Arrivals stay
 derived from the data.
 
+**Amended during phase 5.** "The Picked for you shelf" turned out not to exist:
+that eyebrow sits on **Best Rated**, which is one of the derived shelves this
+very rule protects. So `PICKED_SHELF` renders as its own row — eyebrow
+"Promoted", title "Featured this week" — and its spare positions are padded
+with nothing. Filling them from the catalogue was the obvious next thought and
+is worse than leaving them short: unlabelled cards in a row headed "Promoted"
+are mislabelled in the other direction, while a short row is merely untidy.
+
 **Rejected: letting an admin place a listing on any shelf.** The derived shelves
 are the honest ones — a listing appears in Price Drops because it *is* reduced,
 and in Best Rated because it *has* good reviews. An admin-inserted row on either

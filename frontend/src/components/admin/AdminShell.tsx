@@ -54,6 +54,8 @@ export default function AdminShell({
     { href: "/admin/customers", label: "Customers", icon: <UsersIcon /> },
     { href: "/admin/catalogue", label: "Catalogue", icon: <TagIcon /> },
     { href: "/admin/reports", label: "Reports", icon: <FlagIcon />, badge: openReports },
+    { href: "/admin/messages", label: "Messages", icon: <FlagIcon /> },
+    { href: "/admin/placements", label: "Placements", icon: <TagIcon /> },
     { href: "/admin/deliveries", label: "Delivery log", icon: <SendIcon /> },
     { href: "/admin/payouts", label: "Payout log", icon: <BanknoteIcon /> },
     { href: "/admin/returns", label: "Returns", icon: <ReturnIcon />, badge: openReturns },
