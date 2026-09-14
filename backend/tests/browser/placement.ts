@@ -20,6 +20,31 @@ import { Condition, ListingStatus, UserRole } from "../../src/generated/prisma/e
  *   activates  →  the label appears on the homepage.
  */
 
+/**
+ * Waits for `main` to CONTAIN something, and returns whatever it last saw.
+ *
+ * Every read in this suite used to be `waitForTimeout(1200)` then read, which
+ * passed on this laptop and failed on a loaded CI runner at the one step whose
+ * page does two fetches — the thread list, then the thread. A fixed sleep is a
+ * guess about somebody else's machine.
+ *
+ * Returns the text rather than throwing, so a genuine failure is still an
+ * assertion with the page contents attached rather than an opaque timeout.
+ */
+async function mainText(
+  page: import("playwright").Page,
+  want: RegExp,
+  budgetMs = 30_000
+): Promise<string> {
+  const until = Date.now() + budgetMs;
+  let last = "";
+  for (;;) {
+    last = await page.locator("main").innerText();
+    if (want.test(last) || Date.now() > until) return last;
+    await page.waitForTimeout(250);
+  }
+}
+
 const scope = new Scope("uiplace");
 wireInterrupt();
 cleanupOnInterrupt(() => scope.cleanup());
@@ -95,14 +120,13 @@ void main(
 
       await hubLink.first().click();
       await h.page.waitForURL(/\/seller\/placements/, { timeout: 20000 });
-      await h.page.waitForTimeout(1200);
 
       /**
        * THE DISCLOSURE, ON SCREEN, BEFORE THE FORM.
        * This is the legal requirement rather than a product preference, and the
        * page gets the wording from the API so it cannot be rendered without it.
        */
-      const disclosure = await h.page.locator("main").innerText();
+      const disclosure = await mainText(h.page, /promoted/i);
       t.check(
         /promoted/i.test(disclosure),
         "the request page tells the seller placements are labelled Promoted",
@@ -118,9 +142,8 @@ void main(
         "It is the nicest thing in my shop and it photographs beautifully."
       );
       await h.page.click('button:has-text("Send request")');
-      await h.page.waitForTimeout(2500);
 
-      const afterAsk = await h.page.locator("main").innerText();
+      const afterAsk = await mainText(h.page, /Waiting for Kintsugi/);
       t.check(
         afterAsk.includes(TITLE) && /Waiting for Kintsugi/.test(afterAsk),
         "the request appears, and says whose turn it is in words",
@@ -169,9 +192,8 @@ void main(
       );
 
       await h.page.goto(`${WEB}/admin/placements`, { waitUntil: "networkidle" });
-      await h.page.waitForTimeout(2000);
 
-      const queue = await h.page.locator("main").innerText();
+      const queue = await mainText(h.page, new RegExp(TITLE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       t.check(
         queue.includes(TITLE),
         "the moderator's placement queue shows the request",
@@ -183,7 +205,7 @@ void main(
       );
 
       await h.page.click('button:has-text("Counter or decline")');
-      await h.page.waitForTimeout(500);
+      await h.page.locator('input[type="number"]').first().waitFor({ state: "visible", timeout: 15_000 });
       await fillReliably(h.page, 'input[type="number"]', "60");
       await fillReliably(
         h.page,
@@ -191,9 +213,8 @@ void main(
         "The hero is our most valuable slot, so sixty dollars for the week."
       );
       await h.page.click('button:has-text("Send counter-offer")');
-      await h.page.waitForTimeout(2500);
 
-      const countered = await h.page.locator("main").innerText();
+      const countered = await mainText(h.page, /COUNTERED/);
       t.check(
         /COUNTERED/.test(countered),
         "the request moves to COUNTERED on screen",
@@ -206,9 +227,8 @@ void main(
       await login(h.page, sellerEmail);
       h.phase("seller accepts");
       await h.page.goto(`${WEB}/seller/placements`, { waitUntil: "networkidle" });
-      await h.page.waitForTimeout(1800);
 
-      const counterSeen = await h.page.locator("main").innerText();
+      const counterSeen = await mainText(h.page, /Your turn/);
       t.check(
         /Your turn/.test(counterSeen) && /\$60/.test(counterSeen),
         "the seller sees the counter-offer and the number in it",
@@ -216,9 +236,8 @@ void main(
       );
 
       await h.page.click('button:has-text("Accept these terms")');
-      await h.page.waitForTimeout(2500);
 
-      const agreed = await h.page.locator("main").innerText();
+      const agreed = await mainText(h.page, /Agreed, not live yet/);
       t.check(
         /Agreed, not live yet/.test(agreed),
         "accepting reaches an agreed state the seller can read",
@@ -228,16 +247,47 @@ void main(
       /* ---- 4. the conversation is legible to the seller ---- */
       h.phase("seller reads the thread");
       await h.page.goto(`${WEB}/seller/messages`, { waitUntil: "networkidle" });
-      await h.page.waitForTimeout(1500);
-      await h.page.click(`button:has-text("Homepage placement")`);
-      await h.page.waitForTimeout(1200);
 
-      const thread = await h.page.locator("main").innerText();
+      /**
+       * Two fetches deep: the thread list arrives, then the thread itself.
+       *
+       * THIS IS THE STEP THAT FAILED IN CI, and it failed by THROWING — a
+       * `page.click` timeout, which aborts the suite and reports nothing about
+       * what the page actually showed. It could not be reproduced locally, so
+       * the click is guarded: if the thread never appears in the list, this
+       * reports the list's contents as a failed assertion and the run carries
+       * on to the remaining checks. A flake that explains itself is worth more
+       * than one that dies silently.
+       */
+      const threadButton = h.page.locator('button:has-text("Homepage placement")').first();
+      const listed = await threadButton
+        .waitFor({ state: "visible", timeout: 30_000 })
+        .then(() => true)
+        .catch(() => false);
+
+      t.check(
+        listed,
+        "the placement thread is in the seller's message list",
+        listed ? "" : (await h.page.locator("main").innerText()).slice(0, 300)
+      );
+
+      let thread = "";
+      if (listed) {
+        await threadButton.click();
+        thread = await mainText(h.page, /most valuable slot/);
+      }
       t.check(
         /most valuable slot/.test(thread),
         "the moderator's actual words are in the thread, not just a status",
         thread.slice(0, 300)
       );
+
+      /**
+       * The rest of the suite does not depend on the thread view, so it runs
+       * either way — the activation and the homepage label are the assertions
+       * that matter most and they must not be lost to a flake three steps
+       * earlier.
+       */
 
       /* ---- 5. the moderator makes it live, and the homepage says so ---- */
       h.phase("pre-login");
@@ -245,11 +295,18 @@ void main(
       await login(h.page, adminEmail);
       h.phase("moderator activates");
       await h.page.goto(`${WEB}/admin/placements`, { waitUntil: "networkidle" });
-      await h.page.waitForTimeout(2000);
-      await h.page.click('button:has-text("Make it live")');
-      await h.page.waitForTimeout(2500);
+      const liveButton = h.page.locator('button:has-text("Make it live")').first();
+      await liveButton.waitFor({ state: "visible", timeout: 30_000 });
+      await liveButton.click();
 
-      const live = await h.page.locator("main").innerText();
+      /**
+       * Waits for the SLUG, not for "Live on the homepage" — that string is the
+       * card's title and renders even when the card is empty, so waiting on it
+       * returned instantly and the assertion read a half-rendered page. A
+       * condition that is always true is worse than a sleep, because it looks
+       * like a fix.
+       */
+      const live = await mainText(h.page, new RegExp(slug));
       /**
        * NOT a search for "LIVE" in the queue. Activating moves the row out of
        * the "Needs you" tab on purpose — it no longer needs anybody. What
@@ -264,9 +321,8 @@ void main(
 
       h.phase("homepage");
       await h.page.goto(`${WEB}/`, { waitUntil: "networkidle" });
-      await h.page.waitForTimeout(1500);
 
-      const home = await h.page.locator("main").innerText();
+      const home = await mainText(h.page, new RegExp(TITLE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       t.check(home.includes(TITLE), "the promoted listing is on the homepage", home.slice(0, 200));
       /**
        * Case-insensitive, and that is not laziness. `innerText` returns the
