@@ -158,7 +158,11 @@ export default function SellerPlacementsPage() {
             {listings.length === 0 ? (
               <p className="mt-3 text-sm text-ink-dim">
                 You need a published listing first.{" "}
-                <Link href="/seller/listings" className="text-clay underline">
+                {/* `/seller`, not `/seller/listings` — the latter has no page,
+                    only `[id]` and `new`. Next prefetches Link targets, so the
+                    dead link showed up as a 404 in the browser suite's
+                    failed-request check rather than as a broken click. */}
+                <Link href="/seller" className="text-clay underline">
                   Your listings
                 </Link>
               </p>
