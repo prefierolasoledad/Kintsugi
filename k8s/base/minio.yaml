@@ -41,7 +41,13 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:latest
+          # quay.io, and PINNED, because `minio/minio:latest` on Docker Hub
+          # stopped being anonymously pullable — MinIO moved distribution to
+          # quay.io. The cached copy kept this working until the kind node
+          # restarted and cleared it, and then the pod sat in ImagePullBackOff
+          # for eighteen hours. Everything else here was already pinned
+          # (postgresql:16.10, redis:7-alpine); this was the one `:latest`.
+          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
           args: ["server", "/data", "--console-address", ":9001"]
           ports:
             - name: s3
@@ -100,7 +106,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: mc
-          image: minio/mc:latest
+          image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
           env:
             - name: S3_ACCESS_KEY
               valueFrom:
