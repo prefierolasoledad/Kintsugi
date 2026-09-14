@@ -246,7 +246,24 @@ void main(
 
       /* ---- 4. the conversation is legible to the seller ---- */
       h.phase("seller reads the thread");
-      await h.page.goto(`${WEB}/seller/messages`, { waitUntil: "networkidle" });
+
+      /**
+       * `domcontentloaded` HERE AND NOWHERE ELSE IN THIS SUITE.
+       *
+       * This is the one navigation that fails in CI, and it fails by throwing:
+       * `networkidle` waits for 500ms of network silence, and on a loaded
+       * runner this page does not go quiet inside the 30s navigation ceiling —
+       * so the goto throws, the suite aborts, and nothing is reported about
+       * what the page held.
+       *
+       * Nothing here needs network silence, because the very next statement
+       * waits for the element it is about to click. The other eight navigations
+       * keep `networkidle`: switching them all to `domcontentloaded` returns
+       * before React hydrates, and the seller-hub assertion then read a page
+       * that had not finished rendering. Tried, and it broke two assertions
+       * that had been passing.
+       */
+      await h.page.goto(`${WEB}/seller/messages`, { waitUntil: "domcontentloaded" });
 
       /**
        * Two fetches deep: the thread list arrives, then the thread itself.
