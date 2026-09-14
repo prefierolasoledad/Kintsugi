@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Footer from "@/components/Footer";
 import Nav from "@/components/Nav";
 import { ApiError } from "@/lib/api";
@@ -51,27 +51,32 @@ export default function SellerPlacementsPage() {
   const [endsAt, setEndsAt] = useState("");
   const [note, setNote] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const [mine, meta, catalogue] = await Promise.all([
-        getPlacements(),
-        getSlots(),
-        getSellerListings(),
-      ]);
-      setPlacements(mine.placements);
-      setSlots(meta.slots);
-      setDisclosure(meta.disclosure);
-      setListings(catalogue.listings.filter((l: SellerListing) => l.status === "ACTIVE"));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load your placements.");
-      setPlacements([]);
-    }
-  }, []);
+
+  /** See the note in admin/placements: the fetch lives in the effect so no
+   *  effect depends on a callback that setStates. */
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
 
   useEffect(() => {
     if (!user?.isSeller) return;
-    void load();
-  }, [user, load]);
+    let alive = true;
+    Promise.all([getPlacements(), getSlots(), getSellerListings()])
+      .then(([mine, meta, catalogue]) => {
+        if (!alive) return;
+        setPlacements(mine.placements);
+        setSlots(meta.slots);
+        setDisclosure(meta.disclosure);
+        setListings(catalogue.listings.filter((l: SellerListing) => l.status === "ACTIVE"));
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setError(err instanceof ApiError ? err.message : "Could not load your placements.");
+        setPlacements([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user, reloads]);
 
   if (authLoading) return null;
 
@@ -103,7 +108,7 @@ export default function SellerPlacementsPage() {
       });
       setListingId("");
       setNote("");
-      await load();
+      reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not send that request.");
     } finally {
@@ -116,7 +121,7 @@ export default function SellerPlacementsPage() {
     setError(null);
     try {
       await fn();
-      await load();
+      reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "That did not work.");
     } finally {

@@ -44,17 +44,6 @@ export default function SellerMessagesPage() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const { threads: rows } = await getThreads();
-      setThreads(rows);
-      return rows;
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load your messages.");
-      setThreads([]);
-      return [];
-    }
-  }, []);
 
   const open = useCallback(async (id: string) => {
     try {
@@ -67,10 +56,27 @@ export default function SellerMessagesPage() {
     }
   }, []);
 
+  /** See the note in admin/placements: the fetch lives in the effect so no
+   *  effect depends on a callback that setStates. */
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
+
   useEffect(() => {
     if (!user) return;
-    void load();
-  }, [user, load]);
+    let alive = true;
+    getThreads()
+      .then(({ threads: rows }) => {
+        if (alive) setThreads(rows);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setError(err instanceof ApiError ? err.message : "Could not load your messages.");
+        setThreads([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user, reloads]);
 
   if (authLoading) return null;
 
@@ -151,7 +157,7 @@ export default function SellerMessagesPage() {
                           setComposing(false);
                           setSubject("");
                           setBody("");
-                          await load();
+                          reload();
                           await open(threadId);
                         })
                         .catch((err: unknown) =>
@@ -230,7 +236,7 @@ export default function SellerMessagesPage() {
                       try {
                         await replyToThread(selected.id, text);
                         await open(selected.id);
-                        await load();
+                        reload();
                       } finally {
                         setSending(false);
                       }

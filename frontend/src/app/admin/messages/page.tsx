@@ -41,15 +41,10 @@ function Messages() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { threads: rows } = await getAdminThreads(tab === "UNANSWERED");
-      setThreads(rows);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load the queue.");
-      setThreads([]);
-    }
-  }, [tab]);
+  /** See the note in admin/placements: the fetch lives in the effect so no
+   *  effect depends on a callback that setStates. */
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
 
   const open = useCallback(async (id: string) => {
     try {
@@ -67,13 +62,44 @@ function Messages() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let alive = true;
+    getAdminThreads(tab === "UNANSWERED")
+      .then(({ threads: rows }) => {
+        if (alive) setThreads(rows);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setError(err instanceof ApiError ? err.message : "Could not load the queue.");
+        setThreads([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tab, reloads]);
 
-  /** Deep link from the placement queue, so a decision and its thread are one click apart. */
+  /**
+   * Deep link from the placement queue, so a decision and its thread are one
+   * click apart. Inlined for the same reason as the load above — `open` is a
+   * callback that setStates, and an effect must not depend on one.
+   */
   useEffect(() => {
-    if (requested) void open(requested);
-  }, [requested, open]);
+    if (!requested) return;
+    let alive = true;
+    getAdminThread(requested)
+      .then(({ thread }) => {
+        if (!alive) return;
+        setSelected(thread);
+        setThreads((rows) => rows?.map((r) => (r.id === requested ? { ...r, unread: 0 } : r)) ?? rows);
+      })
+      .catch((err: unknown) => {
+        if (alive) {
+          setError(err instanceof ApiError ? err.message : "Could not open that conversation.");
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [requested]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -141,7 +167,7 @@ function Messages() {
                           setBusy(true);
                           closeAdminThread(selected.id)
                             .then(() => open(selected.id))
-                            .then(() => load())
+                            .then(() => reload())
                             .catch((err: unknown) =>
                               setError(err instanceof ApiError ? err.message : "Could not close it.")
                             )
@@ -159,7 +185,7 @@ function Messages() {
                           setBusy(true);
                           reopenAdminThread(selected.id)
                             .then(() => open(selected.id))
-                            .then(() => load())
+                            .then(() => reload())
                             .catch((err: unknown) =>
                               setError(err instanceof ApiError ? err.message : "Could not reopen it.")
                             )
@@ -196,7 +222,7 @@ function Messages() {
                     try {
                       await replyAsAdmin(selected.id, text);
                       await open(selected.id);
-                      await load();
+                      reload();
                     } finally {
                       setBusy(false);
                     }

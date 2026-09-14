@@ -279,13 +279,18 @@ jobs:
       # disk. The storage suite skipped 12 of its 20 assertions and nothing
       # exercised the path the deployment uses. See ADR 0022.
       # ------------------------------------------------------------------
+      # quay.io, and pinned. `minio/minio:latest` on Docker Hub stopped being
+      # anonymously pullable — MinIO moved distribution to quay.io — and this
+      # step failed with `insufficient_scope: authorization failed` on every run
+      # until it was changed. Compose and k8s/base/minio.yaml carry the same
+      # pins; all three have to move together.
       - name: Start MinIO
         run: |
           docker run -d --name minio \
             -p 9000:9000 \
             -e MINIO_ROOT_USER=kintsugi \
             -e MINIO_ROOT_PASSWORD=kintsugi-ci-not-a-secret \
-            minio/minio:latest server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
 
           # Poll rather than sleep: MinIO is usually up in under a second and
           # a fixed sleep would either be wasted or occasionally too short.
@@ -312,7 +317,7 @@ jobs:
             -e S3_SECRET_KEY=kintsugi-ci-not-a-secret \
             -e S3_BUCKET=kintsugi-uploads \
             -v "$PWD/docker/minio/minio-init.sh:/init.sh:ro" \
-            --entrypoint sh minio/mc:latest /init.sh
+            --entrypoint sh quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z /init.sh
 
       # The generated client is not committed — .gitignore excludes
       # src/generated — so a fresh checkout has nothing to import. Every step

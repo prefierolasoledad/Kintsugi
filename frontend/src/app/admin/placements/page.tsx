@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import AdminGate from "@/components/admin/AdminGate";
 import { Card, EmptyState, Pill, Tabs, fullDate, money } from "@/components/admin/ui";
 import { ApiError } from "@/lib/api";
@@ -47,20 +47,36 @@ function Placements() {
   const [counter, setCounter] = useState("");
   const [note, setNote] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const data = await getPlacementQueue(tab === "PENDING");
-      setRows(data.placements);
-      setLive(data.live);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load the queue.");
-      setRows([]);
-    }
-  }, [tab]);
+  /**
+   * The fetch lives in the effect rather than in a `useCallback` the effect
+   * calls, and `reload` is a counter rather than a function that refetches.
+   *
+   * That is not a style preference: `react-hooks/set-state-in-effect` traces
+   * through a callback that setStates when an effect depends on it, and the
+   * repository's eslint config says in as many words that the answer to a
+   * rising count is the refactor rather than another exception. This is that
+   * refactor, for the pages this feature added. See eslint.config.mjs.
+   */
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let alive = true;
+    getPlacementQueue(tab === "PENDING")
+      .then((data) => {
+        if (!alive) return;
+        setRows(data.placements);
+        setLive(data.live);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setError(err instanceof ApiError ? err.message : "Could not load the queue.");
+        setRows([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tab, reloads]);
 
   async function act(id: string, fn: () => Promise<unknown>) {
     setBusy(id);
@@ -70,7 +86,7 @@ function Placements() {
       setOpen(null);
       setCounter("");
       setNote("");
-      await load();
+      reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "That did not work.");
     } finally {
